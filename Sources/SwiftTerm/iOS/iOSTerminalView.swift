@@ -1048,6 +1048,11 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     
     func setupGestures ()
     {
+        // Same iOS 26.5 delayed-touch crash as below: the scroll view's own content-touch
+        // delay (delaysContentTouches, default true) walks the identical broken UIKit path
+        // on the first tap. Deliver content touches immediately.
+        delaysContentTouches = false
+
         let longPress = UILongPressGestureRecognizer (target: self, action: #selector(longPress(_:)))
         longPress.minimumPressDuration = 0.7
         addGestureRecognizer(longPress)
@@ -1055,16 +1060,26 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         let singleTap = UITapGestureRecognizer (target: self, action: #selector(singleTap(_:)))
         addGestureRecognizer(singleTap)
         
-        let doubleTap = UITapGestureRecognizer (target: self, action: #selector(doubleTap(_:)))
-        doubleTap.numberOfTapsRequired = 2
-        addGestureRecognizer(doubleTap)
-
-        let tripleTap = UITapGestureRecognizer (target: self, action: #selector(tripleTap(_:)))
-        tripleTap.numberOfTapsRequired = 3
-        addGestureRecognizer(tripleTap)
-
-        singleTap.require(toFail: doubleTap)
-        doubleTap.require(toFail: tripleTap)
+        // The multi-tap recognizers are disabled. On the iOS 26.5 runtime any
+        // UITapGestureRecognizer with numberOfTapsRequired > 1 on this view crashes
+        // UIKit's delayed-touch bookkeeping the moment a first tap lands:
+        //   NSInvalidArgumentException -[__NSArrayM insertObject:atIndex:] (nil)
+        //   in -[UIGestureRecognizer _delayTouchesForEvent:inPhase:]
+        // Single tap + long press alone are fine; adding a 2-tap recognizer (with or
+        // without the require(toFail:) chains) reproduces it every time. Cost: double-tap
+        // word-select and triple-tap line-select are gone until a consumer restores them
+        // (tap-counting inside singleTap, or re-enabling these once the regression is fixed).
+        //
+        // let doubleTap = UITapGestureRecognizer (target: self, action: #selector(doubleTap(_:)))
+        // doubleTap.numberOfTapsRequired = 2
+        // addGestureRecognizer(doubleTap)
+        //
+        // let tripleTap = UITapGestureRecognizer (target: self, action: #selector(tripleTap(_:)))
+        // tripleTap.numberOfTapsRequired = 3
+        // addGestureRecognizer(tripleTap)
+        //
+        // singleTap.require(toFail: doubleTap)
+        // doubleTap.require(toFail: tripleTap)
     }
 
     func setupLinkReportingInteractions ()
