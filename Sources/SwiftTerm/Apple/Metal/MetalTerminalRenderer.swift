@@ -2769,9 +2769,8 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
 
     private static func candidateBundles() -> [Bundle] {
         var bundles: [Bundle] = []
-        #if SWIFT_PACKAGE
-        bundles.append(Bundle.module)
-        #endif
+        // No Bundle.module: the trimmed package ships no resources, so SPM synthesizes
+        // none; the class bundle below covers the same lookup.
         bundles.append(Bundle(for: MetalTerminalRenderer.self))
         bundles.append(Bundle.main)
         return bundles
