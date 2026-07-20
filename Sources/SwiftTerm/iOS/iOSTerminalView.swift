@@ -604,7 +604,15 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     // This is a position relative to the buffer
     var lastLongSelect: Position?
     var lastLongSelectRegion = CGRect.zero
-    
+
+    // Multi-tap detection, counted in `singleTap` instead of via UITapGestureRecognizers with
+    // numberOfTapsRequired > 1 — those crash UIKit's delayed-touch bookkeeping on the first tap on
+    // the iOS 26.5 runtime (see setupGestures). `registerLocalTap` groups taps that are close in
+    // both time and space, restoring double-tap word-select and triple-tap line-select.
+    var lastLocalTapTime: TimeInterval = 0
+    var lastLocalTapLocation: CGPoint = .zero
+    var localTapCount: Int = 0
+
     /// Creates a region suitable to be passed to the showContextMenu that wants a
     /// region for the menu to avoid.
     func makeContextMenuRegionForTap (point: CGPoint) -> CGRect {
@@ -745,25 +753,38 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             }
 
             if allowMouseReporting && !shiftBypassesMouseReporting(for: gestureRecognizer) && terminal.mouseMode.sendButtonPress() {
+                // The application is reading the mouse (tmux, a TUI): every tap forwards to it, so a
+                // double/triple-tap arrives as repeated clicks there rather than starting a local
+                // selection. Reset the local tap run so a later selection tap isn't miscounted.
+                resetLocalTapCount()
                 sharedMouseEvent(gestureRecognizer: gestureRecognizer, release: false)
 
                 if terminal.mouseMode.sendButtonRelease() {
                     sharedMouseEvent(gestureRecognizer: gestureRecognizer, release: true)
                 }
             } else {
-                if selection.active {
-                    selection.selectNone()
-                    disableSelectionPanGesture()
-                }
-                if UIMenuController.shared.isMenuVisible {
-                    UIMenuController.shared.hideMenu()
-                } else {
-                    let location = gestureRecognizer.location(in: gestureRecognizer.view)
-                    let tapLoc = calculateTapHit(gesture: gestureRecognizer).grid
-                    let displayBuffer = terminal.displayBuffer
-                    let cursorRow = displayBuffer.y + displayBuffer.yDisp
-                    if abs (tapLoc.col-displayBuffer.x) < 4 && abs (tapLoc.row - cursorRow) < 2 {
-                        showContextMenu (forRegion: makeContextMenuRegionForTap (point: location), pos: tapLoc)
+                // Mouse reporting is off (or shift bypasses it): this is a local selection gesture.
+                // Count consecutive close taps to restore word/line selection without the
+                // multi-tap recognizers that crash on iOS 26.5 (see setupGestures).
+                switch registerLocalTap(gestureRecognizer) {
+                case 2:
+                    selectWord(at: tapHit)
+                case 3:
+                    selectLine(at: tapHit)
+                default:
+                    if selection.active {
+                        selection.selectNone()
+                        disableSelectionPanGesture()
+                    }
+                    if UIMenuController.shared.isMenuVisible {
+                        UIMenuController.shared.hideMenu()
+                    } else {
+                        let location = gestureRecognizer.location(in: gestureRecognizer.view)
+                        let displayBuffer = terminal.displayBuffer
+                        let cursorRow = displayBuffer.y + displayBuffer.yDisp
+                        if abs (tapHit.col-displayBuffer.x) < 4 && abs (tapHit.row - cursorRow) < 2 {
+                            showContextMenu (forRegion: makeContextMenuRegionForTap (point: location), pos: tapHit)
+                        }
                     }
                 }
             }
@@ -789,12 +810,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             }
             return
         } else {
-            let hit = calculateTapHit(gesture: gestureRecognizer).grid
-            selection.selectWordOrExpression(at: hit, in: terminal.displayBuffer)
-            selection.selectionMode = .character
-            enableSelectionPanGesture()
-            showContextMenu (forRegion: makeContextMenuRegionForSelection(), pos: hit)
-            queuePendingDisplay()
+            selectWord(at: calculateTapHit(gesture: gestureRecognizer).grid)
         }
     }
 
@@ -814,14 +830,54 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             }
             return
         } else {
-            let hit = calculateTapHit(gesture: gestureRecognizer).grid
-            selection.select(row: hit.row)
-            enableSelectionPanGesture()
-            showContextMenu (forRegion: makeContextMenuRegionForSelection(), pos: hit)
-            queuePendingDisplay()
+            selectLine(at: calculateTapHit(gesture: gestureRecognizer).grid)
         }
     }
-    
+
+    /// Registers a tap for multi-tap counting and returns the running length of the current run of
+    /// consecutive taps (1, 2, 3, …). A tap counts as continuing the run only when it lands within
+    /// the double-tap window of the previous one in **both** time and space; a slower or farther tap
+    /// starts a fresh run at 1. This is what restores double-tap word-select and triple-tap
+    /// line-select after the multi-tap `UITapGestureRecognizer`s were removed for the iOS 26.5
+    /// delayed-touch crash (setupGestures) — the counting lives in the single-tap handler instead.
+    func registerLocalTap (_ gestureRecognizer: UIGestureRecognizer) -> Int {
+        let now = Date ().timeIntervalSinceReferenceDate
+        let location = gestureRecognizer.location (in: self)
+        let withinTime = now - lastLocalTapTime <= 0.3
+        let withinDistance = hypot (location.x - lastLocalTapLocation.x,
+                                    location.y - lastLocalTapLocation.y) <= cellDimension.height * 1.5
+        localTapCount = (withinTime && withinDistance) ? localTapCount + 1 : 1
+        lastLocalTapTime = now
+        lastLocalTapLocation = location
+        return localTapCount
+    }
+
+    /// Clears the multi-tap run so the next local tap starts counting from 1 — used when a tap was
+    /// consumed another way (forwarded to a mouse-reporting application) and must not seed a
+    /// double/triple-tap.
+    func resetLocalTapCount () {
+        localTapCount = 0
+    }
+
+    /// Selects the word (or shell-style expression) under `hit` and offers the copy menu — the
+    /// double-tap gesture's action.
+    func selectWord (at hit: Position) {
+        selection.selectWordOrExpression (at: hit, in: terminal.displayBuffer)
+        selection.selectionMode = .character
+        enableSelectionPanGesture ()
+        showContextMenu (forRegion: makeContextMenuRegionForSelection (), pos: hit)
+        queuePendingDisplay ()
+    }
+
+    /// Selects the whole logical line at `hit` and offers the copy menu — the triple-tap gesture's
+    /// action.
+    func selectLine (at hit: Position) {
+        selection.select (row: hit.row)
+        enableSelectionPanGesture ()
+        showContextMenu (forRegion: makeContextMenuRegionForSelection (), pos: hit)
+        queuePendingDisplay ()
+    }
+
     var directionView: UIView?
     var directionCount: Int = 0
     var lastCursorImage: String? = nil
