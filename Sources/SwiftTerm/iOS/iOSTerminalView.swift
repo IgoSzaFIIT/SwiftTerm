@@ -840,13 +840,17 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     /// starts a fresh run at 1. This is what restores double-tap word-select and triple-tap
     /// line-select after the multi-tap `UITapGestureRecognizer`s were removed for the iOS 26.5
     /// delayed-touch crash (setupGestures) — the counting lives in the single-tap handler instead.
+    /// The run-length rule itself is the platform-free `tapRunLength` so it can be unit-tested.
     func registerLocalTap (_ gestureRecognizer: UIGestureRecognizer) -> Int {
         let now = Date ().timeIntervalSinceReferenceDate
         let location = gestureRecognizer.location (in: self)
-        let withinTime = now - lastLocalTapTime <= 0.3
-        let withinDistance = hypot (location.x - lastLocalTapLocation.x,
-                                    location.y - lastLocalTapLocation.y) <= cellDimension.height * 1.5
-        localTapCount = (withinTime && withinDistance) ? localTapCount + 1 : 1
+        localTapCount = tapRunLength (
+            previousCount: localTapCount,
+            interval: now - lastLocalTapTime,
+            distance: Double (hypot (location.x - lastLocalTapLocation.x,
+                                     location.y - lastLocalTapLocation.y)),
+            maxInterval: 0.3,
+            maxDistance: Double (cellDimension.height) * 1.5)
         lastLocalTapTime = now
         lastLocalTapLocation = location
         return localTapCount
