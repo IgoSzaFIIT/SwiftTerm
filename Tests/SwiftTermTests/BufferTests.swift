@@ -365,4 +365,38 @@ final class BufferTests: TerminalDelegate {
 
         // Should not crash - if we get here, the test passes
     }
+
+    /// Shrinking the buffer trims lines off the *front* of the scrollback, so those lines are
+    /// trimmed lines and must be counted as such. Before this was fixed, `resize` dropped them
+    /// with `trimStart` but left `linesTop` alone, so the absolute line numbering that
+    /// `totalLinesTrimmed` and `getScrollInvariantLine(row:)` define silently shifted: the same
+    /// absolute row addressed different content before and after the resize.
+    @Test func testShrinkingRowsKeepsAbsoluteLineNumbersStable() {
+        let rows = 25
+        let terminal = Terminal(delegate: self, options: TerminalOptions(cols: 80, rows: rows))
+        terminal.changeScrollback(100)
+
+        // Fill well past the cap so the buffer is full and shrinking has to trim the front.
+        for i in 0..<400 {
+            terminal.feed(text: "line \(i)\r\n")
+        }
+
+        // Pick an absolute row inside the retained space and remember what it holds.
+        let probe = terminal.buffer.totalLinesTrimmed + 10
+        let before = terminal.getScrollInvariantLine(row: probe)
+        #expect(before != nil, "the probe row must start out inside the buffer")
+        let beforeText = before?.translateToString(trimRight: true)
+
+        terminal.resize(cols: 80, rows: rows - 4)
+
+        // Either the row is still present and still holds the same content, or it fell below the
+        // (now advanced) trim line — never the same number addressing something else.
+        if let after = terminal.getScrollInvariantLine(row: probe) {
+            #expect(after.translateToString(trimRight: true) == beforeText,
+                    "absolute row \(probe) changed content across a resize")
+        } else {
+            #expect(probe < terminal.buffer.totalLinesTrimmed,
+                    "row \(probe) vanished without being counted as trimmed")
+        }
+    }
 }
