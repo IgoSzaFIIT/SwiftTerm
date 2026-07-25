@@ -41,7 +41,11 @@ public final class Buffer {
     /// This is the index into the `lines` array that corresponds to the top row of displayed
     /// content in the terminal when the scroll is zero.   So the terminal contents that the application
     /// has access to are `lines [yBase..(yBase+rows)]`
-    var yBase: Int {
+    ///
+    /// Readable by embedders as the companion to `yDisp`: the pair is where the live tail sits
+    /// versus where the viewport does, so `yBase - yDisp` is the exact number of lines a
+    /// scrolled-up viewport is behind the newest output. Mutation stays internal to the emulator.
+    public internal(set) var yBase: Int {
         get { _yBase }
         set {
             if newValue > _lines.count {
