@@ -584,8 +584,8 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     ///  - pos: the location where this was triggered in the buffer, it used at a later point
     ///  to auto-select a word
     func showContextMenu (forRegion: CGRect, pos: Position) {
-        var items: [UIMenuItem] = []
-        
+        let items: [UIMenuItem] = extraMenuActions.map { UIMenuItem (title: $0.title, action: $0.action) }
+
         lastLongSelect = pos
         lastLongSelectRegion = forRegion
 
@@ -601,8 +601,13 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         menuController.showMenu(from: self, rect: forRegion)
     }
     
+    /// Extra entries to show in the long-press context menu, appended after the built-in ones.
+    /// Each is a title and the responder action the item invokes; the embedder implements the
+    /// action and gates it from `canPerformAction(_:withSender:)` as usual.
+    public var extraMenuActions: [(title: String, action: Selector)] = []
+
     // This is a position relative to the buffer
-    var lastLongSelect: Position?
+    public private(set) var lastLongSelect: Position?
     var lastLongSelectRegion = CGRect.zero
 
     // Multi-tap detection, counted in `singleTap` instead of via UITapGestureRecognizers with
@@ -1426,6 +1431,20 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     /// system (where `selectNone` would otherwise come from).
     public func clearSelection() {
         selection?.selectNone()
+    }
+
+    /// Selects the buffer range and presents the standard context menu
+    /// over it, the way the menu's own "Select" item does — the drag
+    /// handles are live afterwards, so the range stays adjustable.
+    /// Use this rather than `setSelectionRange` when the selection is
+    /// made *from* the menu and Copy should follow.
+    public func selectRange(start: Position, end: Position) {
+        setSelectionRange(start: start, end: end)
+        enableSelectionPanGesture()
+        DispatchQueue.main.async {
+            self.showContextMenu(forRegion: self.makeContextMenuRegionForSelection(),
+                                 pos: self.lastLongSelect ?? start)
+        }
     }
 
     /// Programmatically presents SwiftTerm's standard Copy / Paste /
