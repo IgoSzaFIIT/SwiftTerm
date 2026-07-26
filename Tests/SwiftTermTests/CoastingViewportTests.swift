@@ -19,11 +19,15 @@ import XCTest
 final class CoastingViewportTests: XCTestCase {
     private let offsetTolerance = 1.0 / 3.0 // one device pixel at 3x
 
-    private func moves (isFrozen: Bool, from previousOffsetY: Double, to offsetY: Double) -> Bool {
+    private func moves (isFrozen: Bool,
+                        from previousOffsetY: Double,
+                        to offsetY: Double,
+                        previousOffsetIsFromTheScrollView: Bool = true) -> Bool {
         coastMovesTheViewport (isFrozen: isFrozen,
                                offsetY: offsetY,
                                previousOffsetY: previousOffsetY,
-                               offsetTolerance: offsetTolerance)
+                               offsetTolerance: offsetTolerance,
+                               previousOffsetIsFromTheScrollView: previousOffsetIsFromTheScrollView)
     }
 
     /// A coast on an already-frozen view always moves the viewport, whichever way it travels: the
@@ -60,5 +64,35 @@ final class CoastingViewportTests: XCTestCase {
     func testASubPixelDriftIsNotTravel () {
         XCTAssertFalse (moves (isFrozen: false, from: 51666.67, to: 51666.5))
         XCTAssertTrue  (moves (isFrozen: false, from: 51666.67, to: 51665.67))
+    }
+
+    /// The tolerance is the exclusive edge, not the first qualifying value: a move of exactly one
+    /// device pixel is still noise, and anything past it is travel. Pinned because the rule is a
+    /// strict comparison and an off-by-one-pixel reading here is a freeze the reader did not ask for.
+    func testTheToleranceItselfIsNotYetTravel () {
+        XCTAssertFalse (moves (isFrozen: false, from: 51666.67, to: 51666.67 - offsetTolerance))
+        XCTAssertTrue  (moves (isFrozen: false, from: 51666.67, to: 51666.67 - offsetTolerance - 0.01))
+    }
+
+    /// An offset the *view* wrote is not a sample of where the reader is travelling, and comparing
+    /// against one is how the protected case comes back. While the freeze is off the view writes the
+    /// offset between coast frames — pinning to the tail as output arrives, landing a jump home,
+    /// following the caret — and every one of those writes moves it toward the bottom, so the next
+    /// genuine sample reads as a move away from it. Read that as travel and a view the reader just
+    /// sent back to the live tail freezes itself again.
+    func testACoastSampleAfterTheViewWroteTheOffsetIsLeftAlone () {
+        XCTAssertFalse (moves (isFrozen: false, from: 53788, to: 53741, previousOffsetIsFromTheScrollView: false))
+    }
+
+    /// The frozen half does not depend on the comparison at all, so a written predecessor cannot
+    /// strand a reader who *is* travelling through history — that coast keeps being tracked.
+    func testAFrozenCoastIsUnaffectedByAWrittenPredecessor () {
+        XCTAssertTrue (moves (isFrozen: true, from: 53788, to: 53741, previousOffsetIsFromTheScrollView: false))
+    }
+
+    /// And the very next sample has a real predecessor again, so a flick that began at the tail is
+    /// caught one frame later rather than never — the cost of the rule above, bounded and pinned.
+    func testTheSampleAfterThatIsReadNormally () {
+        XCTAssertTrue (moves (isFrozen: false, from: 53741, to: 53694, previousOffsetIsFromTheScrollView: true))
     }
 }

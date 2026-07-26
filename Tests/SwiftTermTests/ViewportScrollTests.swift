@@ -20,27 +20,31 @@ final class ViewportScrollTests: XCTestCase {
     private let atBottomThreshold = 5.0     // half a cell, as the view derives it
     private let offsetTolerance = 1.0 / 3.0 // one device pixel at 3x
 
-    private func landing (_ targetOffsetY: Double) -> ViewportScrollLanding {
-        viewportScrollLanding (targetOffsetY: targetOffsetY,
-                               maxContentOffsetY: maxContentOffsetY,
-                               maxRow: maxRow,
-                               cellHeight: cellHeight,
-                               atBottomThreshold: atBottomThreshold,
-                               offsetTolerance: offsetTolerance)
+    private func landing (_ targetOffsetY: Double,
+                          maxContentOffsetY: Double? = nil,
+                          file: StaticString = #filePath,
+                          line: UInt = #line) throws -> ViewportScrollLanding {
+        try XCTUnwrap (viewportScrollLanding (targetOffsetY: targetOffsetY,
+                                              maxContentOffsetY: maxContentOffsetY ?? self.maxContentOffsetY,
+                                              maxRow: maxRow,
+                                              cellHeight: cellHeight,
+                                              atBottomThreshold: atBottomThreshold,
+                                              offsetTolerance: offsetTolerance),
+                       file: file, line: line)
     }
 
     /// A move that lands short of the bottom names the row under it and **engages** the freeze. This
     /// is the whole point: without it the viewport keeps naming the live tail, reports that it is
     /// following output, and the next arriving line yanks the reader back down.
-    func testALandingShortOfTheBottomNamesItsRowAndFreezes () {
-        XCTAssertEqual (landing (500), ViewportScrollLanding (row: 50, freezesScrolling: true, offsetWithinRow: 0))
-        XCTAssertEqual (landing (0),   ViewportScrollLanding (row: 0,  freezesScrolling: true, offsetWithinRow: 0))
+    func testALandingShortOfTheBottomNamesItsRowAndFreezes () throws {
+        XCTAssertEqual (try landing (500), ViewportScrollLanding (row: 50, freezesScrolling: true, offsetWithinRow: 0))
+        XCTAssertEqual (try landing (0),   ViewportScrollLanding (row: 0,  freezesScrolling: true, offsetWithinRow: 0))
     }
 
     /// A move that lands at the bottom names the newest screen and **releases** the freeze, so
     /// auto-follow re-engages exactly as a drag back to the bottom makes it.
-    func testALandingAtTheBottomFollowsOutputAgain () {
-        XCTAssertEqual (landing (maxContentOffsetY),
+    func testALandingAtTheBottomFollowsOutputAgain () throws {
+        XCTAssertEqual (try landing (maxContentOffsetY),
                         ViewportScrollLanding (row: maxRow, freezesScrolling: false, offsetWithinRow: 0))
     }
 
@@ -48,51 +52,65 @@ final class ViewportScrollTests: XCTestCase {
     /// `atBottomThreshold` short of the maximum still counts as the bottom, and a hair further up
     /// does not. A partial last row and `contentInset` rounding are why the band exists at all — an
     /// exact-maximum test left the freeze permanently engaged.
-    func testTheAtBottomBandIsRespectedAtItsBoundary () {
-        let onTheEdge = landing (maxContentOffsetY - atBottomThreshold)
+    func testTheAtBottomBandIsRespectedAtItsBoundary () throws {
+        let onTheEdge = try landing (maxContentOffsetY - atBottomThreshold)
         XCTAssertFalse (onTheEdge.freezesScrolling)
         XCTAssertEqual (onTheEdge.row, maxRow)
 
-        let justInside = landing (maxContentOffsetY - atBottomThreshold - 0.5)
+        let justInside = try landing (maxContentOffsetY - atBottomThreshold - 0.5)
         XCTAssertTrue (justInside.freezesScrolling)
         XCTAssertEqual (justInside.row, 89)
     }
 
     /// An overscroll past the bottom is still the bottom, and a move above the first row is still
     /// the first row — a landing can never name a row outside the buffer's window.
-    func testTargetsOutsideTheScrollableRangeClampIntoIt () {
-        XCTAssertEqual (landing (maxContentOffsetY + 400),
+    func testTargetsOutsideTheScrollableRangeClampIntoIt () throws {
+        XCTAssertEqual (try landing (maxContentOffsetY + 400),
                         ViewportScrollLanding (row: maxRow, freezesScrolling: false, offsetWithinRow: 0))
 
-        let aboveTheTop = landing (-400)
+        let aboveTheTop = try landing (-400)
         XCTAssertEqual (aboveTheTop.row, 0)
         XCTAssertTrue (aboveTheTop.freezesScrolling)
         XCTAssertEqual (aboveTheTop.offsetWithinRow, 0, accuracy: 0.000_1)
     }
 
+    /// A bottom inset — an accessory view, the safe area, the keyboard — pushes the scroll view's
+    /// resting maximum *past* the last row's own offset, which is the whole reason the landing
+    /// clamps to `maxRow` rather than trusting the division. Here the maximum sits 40 pt beyond
+    /// row 90, so an offset short of the at-bottom band can still divide out to a row the buffer
+    /// does not have; the viewport must name the newest screen instead of one past it, and the
+    /// remainder must still reproduce where the view rests.
+    func testAnInsetPastTheLastRowStillNamesTheLastRow () throws {
+        let withInset = try landing (930, maxContentOffsetY: 940)
+        XCTAssertEqual (withInset.row, maxRow)
+        XCTAssertTrue (withInset.freezesScrolling)
+        XCTAssertEqual (Double (withInset.row) * cellHeight + withInset.offsetWithinRow, 930, accuracy: 0.000_1)
+    }
+
     /// `offsetWithinRow` is the remainder that reproduces the resting offset from the row, so a
     /// landing between two rows renders where it landed instead of snapping to the cell grid.
-    func testOffsetWithinRowReproducesTheRestingOffset () {
-        let between = landing (503)
+    func testOffsetWithinRowReproducesTheRestingOffset () throws {
+        let between = try landing (503)
         XCTAssertEqual (between.row, 50)
         XCTAssertEqual (Double (between.row) * cellHeight + between.offsetWithinRow, 503, accuracy: 0.000_1)
     }
 
     /// The sub-pixel tolerance rounds an offset resting a hair under a row boundary onto that row,
     /// rather than leaving it naming the row above — the same slack the drag path applies.
-    func testASubPixelShortfallStillNamesTheRowBelow () {
-        XCTAssertEqual (landing (500 - offsetTolerance / 2).row, 50)
+    func testASubPixelShortfallStillNamesTheRowBelow () throws {
+        XCTAssertEqual (try landing (500 - offsetTolerance / 2).row, 50)
     }
 
-    /// With no cell grid to read — a view that has not been laid out yet — the landing reports the
-    /// bottom rather than dividing by a zero cell height.
-    func testAZeroCellHeightReportsTheBottom () {
-        let noGrid = viewportScrollLanding (targetOffsetY: 500,
-                                            maxContentOffsetY: maxContentOffsetY,
-                                            maxRow: maxRow,
-                                            cellHeight: 0,
-                                            atBottomThreshold: atBottomThreshold,
-                                            offsetTolerance: offsetTolerance)
-        XCTAssertEqual (noGrid, ViewportScrollLanding (row: maxRow, freezesScrolling: false, offsetWithinRow: 0))
+    /// With no cell grid to read — a view that has not been laid out yet — there is **no** landing.
+    /// The tempting answer, the bottom, is the harmful one: it would say the viewport follows output
+    /// while the offset moves away from the tail, which is the exact false reading this rule exists
+    /// to prevent. Answering `nil` leaves the viewport model untouched instead.
+    func testAZeroCellHeightHasNoLanding () {
+        XCTAssertNil (viewportScrollLanding (targetOffsetY: 500,
+                                             maxContentOffsetY: maxContentOffsetY,
+                                             maxRow: maxRow,
+                                             cellHeight: 0,
+                                             atBottomThreshold: atBottomThreshold,
+                                             offsetTolerance: offsetTolerance))
     }
 }

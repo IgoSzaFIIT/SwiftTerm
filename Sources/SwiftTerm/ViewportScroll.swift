@@ -1,9 +1,12 @@
 //
 //  ViewportScroll.swift
 //
-//  The pure rule behind a programmatic, user-intended viewport move on the iOS terminal view
-//  (see `accessibilityScroll` in iOSTerminalView). Kept free of UIKit and of a live scroll view so
-//  it can be unit-tested on any platform — the scroll view it drives cannot.
+//  The pure rules behind a user-intended viewport move on the iOS terminal view: where a move
+//  lands, and which momentum-coast samples are travel. Both are read by `iOSTerminalView` — the
+//  landing by the finger's drag (`syncYDispFromContentOffset`) and by the scroll that has no finger
+//  behind it (`accessibilityScroll`), off the one function so the two can never name different rows
+//  for the same offset. Kept free of UIKit and of a live scroll view so they can be unit-tested on
+//  any platform — the scroll view they drive cannot.
 //
 
 import Foundation
@@ -32,19 +35,29 @@ struct ViewportScrollLanding: Equatable {
 /// arrives below it.
 ///
 /// `offsetTolerance` is the sub-pixel slack (one device pixel) that keeps an offset resting a hair
-/// under a row boundary from naming the row above it. A non-positive `cellHeight` has no row grid
-/// to read, so it reports the bottom rather than dividing by it.
+/// under a row boundary from naming the row above it.
+///
+/// Returns `nil` when there is no row grid to read — a non-positive `cellHeight`, which is a view
+/// that has not been laid out yet. There is no honest answer there, and the tempting one is the
+/// harmful one: reporting the bottom would say the viewport follows output, which is exactly the
+/// false reading this rule exists to prevent. The caller leaves the viewport model alone instead,
+/// which is also what the drag path's own `cellHeight > 0` guard does.
 func viewportScrollLanding (targetOffsetY: Double,
                             maxContentOffsetY: Double,
                             maxRow: Int,
                             cellHeight: Double,
                             atBottomThreshold: Double,
-                            offsetTolerance: Double) -> ViewportScrollLanding {
-    let atBottom = ViewportScrollLanding (row: maxRow, freezesScrolling: false, offsetWithinRow: 0)
-    let restingOffsetY = min (max (targetOffsetY, 0), maxContentOffsetY)
-    if restingOffsetY >= maxContentOffsetY - atBottomThreshold || cellHeight <= 0 {
-        return atBottom
+                            offsetTolerance: Double) -> ViewportScrollLanding? {
+    guard cellHeight > 0 else {
+        return nil
     }
+    let restingOffsetY = min (max (targetOffsetY, 0), maxContentOffsetY)
+    if restingOffsetY >= maxContentOffsetY - atBottomThreshold {
+        return ViewportScrollLanding (row: maxRow, freezesScrolling: false, offsetWithinRow: 0)
+    }
+    // The row can still divide out past `maxRow` while short of the band: a bottom inset pushes the
+    // scroll view's resting maximum *beyond* the last row's own offset, so the clamp is
+    // load-bearing, not defensive.
     let row = max (0, min (maxRow, Int (floor ((restingOffsetY + offsetTolerance) / cellHeight))))
     return ViewportScrollLanding (row: row,
                                   freezesScrolling: true,
@@ -72,9 +85,22 @@ func viewportScrollLanding (targetOffsetY: Double,
 /// qualifies, and it must move by more than `offsetTolerance` — a sub-device-pixel drift at the end
 /// of a coast is noise, not travel. Pass the *clamped*, resting offsets: an overscroll bounce does
 /// come back down, and clamping keeps that from reading as travel into history.
+///
+/// `previousOffsetIsFromTheScrollView` is what keeps that direction test honest. Not every offset a
+/// coast sample is compared against was sampled from the coast: the view also writes the offset
+/// itself — pinning to the tail as output arrives, landing a jump back to the bottom, following the
+/// caret — and while the freeze is off it does so *between* coast frames. Each of those writes moves
+/// the offset toward the bottom, so the next genuine sample reads as a move away from it and the
+/// direction test would freeze a view that is following output. Compared against a written offset
+/// there is nothing to read, so the answer is the frozen-only one; the sample after it has a real
+/// predecessor again, and a flick is caught one frame later instead of never.
 func coastMovesTheViewport (isFrozen: Bool,
                             offsetY: Double,
                             previousOffsetY: Double,
-                            offsetTolerance: Double) -> Bool {
-    isFrozen || offsetY < previousOffsetY - offsetTolerance
+                            offsetTolerance: Double,
+                            previousOffsetIsFromTheScrollView: Bool) -> Bool {
+    if isFrozen {
+        return true
+    }
+    return previousOffsetIsFromTheScrollView && offsetY < previousOffsetY - offsetTolerance
 }

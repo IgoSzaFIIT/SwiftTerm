@@ -1609,6 +1609,11 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     var userScrolling = false
     private var updatingContentOffsetFromTerminal = false
     private var manualScrollOffsetWithinRow: CGFloat = 0
+    /// Whether the offset currently in place was written by this view rather than sampled from the
+    /// scroll view. It is consumed by the next sync, which is the only reader: see
+    /// `coastMovesTheViewport` for why a written offset is not something a coast sample can be
+    /// compared against.
+    private var offsetWasWrittenByTerminal = false
 
     private var contentOffsetTolerance: CGFloat {
         1 / max(backingScaleFactor(), 1)
@@ -1647,6 +1652,9 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         updatingContentOffsetFromTerminal = true
         contentOffset = newContentOffset
         updatingContentOffsetFromTerminal = false
+        // Only when it actually wrote — the early return above leaves a scroll-view offset in place,
+        // and the next sample can still be compared against it.
+        offsetWasWrittenByTerminal = true
     }
 
     private func setManualScrolling(_ enabled: Bool) {
@@ -1674,6 +1682,12 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         guard terminal != nil, !updatingContentOffsetFromTerminal, cellDimension.height > 0 else {
             return
         }
+
+        // Consumed here, before any early return: the offset now in place came from the scroll
+        // view — this method never runs for one this view wrote, that returns above — so whatever
+        // the flag says applies to the *previous* offset and to this call only.
+        let previousOffsetIsFromTheScrollView = !offsetWasWrittenByTerminal
+        offsetWasWrittenByTerminal = false
 
         let displayBuffer = terminal.displayBuffer
         let maxRow = maxDisplayRow(in: displayBuffer)
@@ -1719,25 +1733,39 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             isFrozen: userScrolling,
             offsetY: Double(offsetY),
             previousOffsetY: Double(previousOffsetY),
-            offsetTolerance: Double(contentOffsetTolerance))
+            offsetTolerance: Double(contentOffsetTolerance),
+            previousOffsetIsFromTheScrollView: previousOffsetIsFromTheScrollView)
         guard isTracking || coasting else {
             return
         }
 
-        let row = max(0, min(maxRow, Int(floor((offsetY + contentOffsetTolerance) / cellDimension.height))))
-        manualScrollOffsetWithinRow = offsetY - CGFloat(row) * cellDimension.height
-        if displayBuffer.yDisp != row {
-            terminal.setViewYDisp(row)
+        // The same landing the accessibility scroll takes, off the same rule, so a drag and a
+        // scroll with no finger behind it can never name different rows for the same offset. The
+        // at-bottom case returned above, so this only ever comes back frozen; `cellDimension.height`
+        // is positive by the guard at the top, so it only ever comes back at all.
+        guard let landing = viewportScrollLanding(
+            targetOffsetY: Double(offsetY),
+            maxContentOffsetY: Double(maxContentOffset),
+            maxRow: maxRow,
+            cellHeight: Double(cellDimension.height),
+            atBottomThreshold: Double(atBottomThreshold),
+            offsetTolerance: Double(contentOffsetTolerance)) else {
+            return
         }
 
         // Freezing the view is the other half of naming the right row: without it the
         // emulator keeps auto-scrolling the buffer, and the next arriving line yanks
-        // the reader back to the tail. It is safe on every path that reaches here —
-        // a finger is down, the view is already frozen, or the coast rule above just
-        // proved the offset is travelling into history. Note it must never key off
-        // isDragging: on device that stays true through the entire coast, so it
-        // cannot distinguish an active drag from momentum at all.
-        setManualScrolling(true)
+        // the reader back to the tail. The landing always asks for it here — the
+        // release case returned above — and it is safe on every path that reaches
+        // this line: a finger is down, the view is already frozen, or the coast rule
+        // above just proved the offset is travelling into history. Note it must never
+        // key off isDragging: on device that stays true through the entire coast, so
+        // it cannot distinguish an active drag from momentum at all.
+        setManualScrolling(landing.freezesScrolling)
+        manualScrollOffsetWithinRow = CGFloat(landing.offsetWithinRow)
+        if displayBuffer.yDisp != landing.row {
+            terminal.setViewYDisp(landing.row)
+        }
     }
 
     func getCurrentGraphicsContext () -> CGContext?
@@ -1862,14 +1890,14 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         // viewport follows output while it sits up in history — the affordance that gets
         // the reader home would be hidden exactly when it is needed. Setting the freeze
         // first also lets updateScroller reproduce this resting offset from the row.
-        if terminal != nil {
-            let landing = viewportScrollLanding(
-                targetOffsetY: Double(targetOffsetY),
-                maxContentOffsetY: Double(maxOffsetY),
-                maxRow: maxDisplayRow(in: terminal.displayBuffer),
-                cellHeight: Double(cellDimension.height),
-                atBottomThreshold: Double(atBottomThreshold),
-                offsetTolerance: Double(contentOffsetTolerance))
+        if terminal != nil,
+           let landing = viewportScrollLanding(
+               targetOffsetY: Double(targetOffsetY),
+               maxContentOffsetY: Double(maxOffsetY),
+               maxRow: maxDisplayRow(in: terminal.displayBuffer),
+               cellHeight: Double(cellDimension.height),
+               atBottomThreshold: Double(atBottomThreshold),
+               offsetTolerance: Double(contentOffsetTolerance)) {
             setManualScrolling(landing.freezesScrolling)
             manualScrollOffsetWithinRow = CGFloat(landing.offsetWithinRow)
             if terminal.displayBuffer.yDisp != landing.row {
