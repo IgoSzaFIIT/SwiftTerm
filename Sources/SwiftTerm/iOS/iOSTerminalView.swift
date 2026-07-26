@@ -1670,7 +1670,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         setContentOffsetFromTerminal(CGPoint(x: 0, y: bottomOffset))
     }
 
-    private func syncYDispFromContentOffset() {
+    private func syncYDispFromContentOffset(previousContentOffsetY: CGFloat) {
         guard terminal != nil, !updatingContentOffsetFromTerminal, cellDimension.height > 0 else {
             return
         }
@@ -1679,6 +1679,9 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         let maxRow = maxDisplayRow(in: displayBuffer)
         let maxContentOffset = maxContentOffsetY()
         let offsetY = min(max(contentOffset.y, 0), maxContentOffset)
+        // Clamped the same way, so an overscroll bounce — which does travel back down —
+        // compares as standing still at the bottom rather than as a move into history.
+        let previousOffsetY = min(max(previousContentOffsetY, 0), maxContentOffset)
 
         // A drag that lands within half a row of the bottom (or overscrolls past
         // it) re-engages auto-follow — see atBottomThreshold for why the band is
@@ -1700,14 +1703,23 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         // through history can leave that several times too small until the next
         // touch happens to resync it.
         //
-        // Only for an already-frozen view, though. While auto-follow is engaged
-        // updateScroller is deliberately pinning the offset to the bottom right
-        // through deceleration (streaming output extends the content faster than
-        // the coast), and syncing yDisp from the coasting offset there would undo
-        // that pin. Deceleration also only ever follows a real drag, so this can
-        // never pick up a layout/system-driven offset change (startup sizing,
-        // rotation, keyboard insets, buffer shrink).
-        let coasting = isDecelerating && userScrolling
+        // A frozen view always qualifies, and so does an unfrozen coast that is
+        // provably travelling *away* from the bottom — the flick that begins at the
+        // live tail, whose finger-down phase never leaves the at-bottom band above,
+        // so the freeze never engages and every pixel of travel happens here. See
+        // coastMovesTheViewport for why direction, not timing, is what separates
+        // that from the fling *to* the bottom under streaming output, which must
+        // not re-freeze.
+        //
+        // Deceleration only ever follows a real drag, and an offset this view wrote
+        // itself returns at the top of this method, so neither branch can pick up a
+        // layout/system-driven offset change (startup sizing, rotation, keyboard
+        // insets, buffer shrink).
+        let coasting = isDecelerating && coastMovesTheViewport(
+            isFrozen: userScrolling,
+            offsetY: Double(offsetY),
+            previousOffsetY: Double(previousOffsetY),
+            offsetTolerance: Double(contentOffsetTolerance))
         guard isTracking || coasting else {
             return
         }
@@ -1718,17 +1730,13 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             terminal.setViewYDisp(row)
         }
 
-        // Engaging the freeze stays finger-down only. Excluding the momentum
-        // coast is essential: after the finger lifts, deceleration keeps firing
-        // sync while streaming output extends the content and the bottom recedes
-        // ahead of the coasting offset — treating that "not at the bottom yet"
-        // reading as a manual scroll would re-freeze a view the user just flung
-        // to the bottom. This must key off isTracking, not isDragging: on device
-        // isDragging stays true through the entire coast, so it fails to exclude
-        // momentum.
-        guard isTracking else {
-            return
-        }
+        // Freezing the view is the other half of naming the right row: without it the
+        // emulator keeps auto-scrolling the buffer, and the next arriving line yanks
+        // the reader back to the tail. It is safe on every path that reaches here —
+        // a finger is down, the view is already frozen, or the coast rule above just
+        // proved the offset is travelling into history. Note it must never key off
+        // isDragging: on device that stays true through the entire coast, so it
+        // cannot distinguish an active drag from momentum at all.
         setManualScrolling(true)
     }
 
@@ -1811,7 +1819,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
 
     open override var contentOffset: CGPoint {
         didSet {
-            syncYDispFromContentOffset()
+            syncYDispFromContentOffset(previousContentOffsetY: oldValue.y)
 #if canImport(MetalKit)
             if useMetalRenderer, metalView != nil {
                 requestMetalDisplay()
