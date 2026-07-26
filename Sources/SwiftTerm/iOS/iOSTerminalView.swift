@@ -1618,6 +1618,13 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         max(0, displayBuffer.lines.count - displayBuffer.rows)
     }
 
+    /// How close to the bottom a resting offset counts as *being* at the bottom, and so re-engages
+    /// auto-follow. A sub-pixel tolerance was too tight — fractional cell heights and contentInset
+    /// rounding left the user a hair short of the exact maximum, so the freeze never disengaged.
+    private var atBottomThreshold: CGFloat {
+        max(contentOffsetTolerance, cellDimension.height / 2)
+    }
+
     /// The largest resting `contentOffset.y` the scroll view can actually reach.
     /// This is smaller than `maxDisplayRow * cellHeight` by the partial-row
     /// remainder whenever the viewport height is not an exact multiple of the
@@ -1674,10 +1681,8 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         let offsetY = min(max(contentOffset.y, 0), maxContentOffset)
 
         // A drag that lands within half a row of the bottom (or overscrolls past
-        // it) re-engages auto-follow. A sub-pixel tolerance was too tight —
-        // fractional cell heights and contentInset rounding left the user a hair
-        // short of the exact maximum, so the freeze never disengaged.
-        let atBottomThreshold = max(contentOffsetTolerance, cellDimension.height / 2)
+        // it) re-engages auto-follow — see atBottomThreshold for why the band is
+        // wider than a pixel.
         if offsetY >= maxContentOffset - atBottomThreshold {
             if displayBuffer.yDisp != maxRow {
                 terminal.setViewYDisp(maxRow)
@@ -1817,7 +1822,11 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
 
     open override func accessibilityScroll(_ direction: UIAccessibilityScrollDirection) -> Bool {
         let pageHeight = max(bounds.height, cellDimension.height)
-        let maxOffsetY = max(0, contentSize.height - bounds.height)
+        // The scroll view's *resting* maximum, not contentSize - bounds: with a bottom
+        // inset (accessory view, safe area, keyboard) the two differ, and clamping to
+        // the smaller one leaves a downward scroll short of the bottom — short of the
+        // band where auto-follow re-engages.
+        let maxOffsetY = maxContentOffsetY()
         let targetOffsetY: CGFloat
 
         switch direction {
@@ -1831,6 +1840,33 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
 
         guard targetOffsetY != contentOffset.y else {
             return false
+        }
+
+        // This scroll is a user act, so the viewport model has to follow it — the same
+        // duty a finger's drag discharges through syncYDispFromContentOffset. That path
+        // deliberately ignores an offset change with no finger behind it (startup
+        // sizing, rotation, keyboard insets, buffer shrink) and cannot tell one of those
+        // from this, so the decision is made here, where the intent is known, and the
+        // guard there is left alone.
+        //
+        // Publish it *before* moving the offset: observers of contentOffset read yDisp
+        // on the change, and a yDisp still naming the live tail would tell them the
+        // viewport follows output while it sits up in history — the affordance that gets
+        // the reader home would be hidden exactly when it is needed. Setting the freeze
+        // first also lets updateScroller reproduce this resting offset from the row.
+        if terminal != nil {
+            let landing = viewportScrollLanding(
+                targetOffsetY: Double(targetOffsetY),
+                maxContentOffsetY: Double(maxOffsetY),
+                maxRow: maxDisplayRow(in: terminal.displayBuffer),
+                cellHeight: Double(cellDimension.height),
+                atBottomThreshold: Double(atBottomThreshold),
+                offsetTolerance: Double(contentOffsetTolerance))
+            setManualScrolling(landing.freezesScrolling)
+            manualScrollOffsetWithinRow = CGFloat(landing.offsetWithinRow)
+            if terminal.displayBuffer.yDisp != landing.row {
+                terminal.setViewYDisp(landing.row)
+            }
         }
 
         setContentOffset(CGPoint(x: contentOffset.x, y: targetOffsetY), animated: false)
