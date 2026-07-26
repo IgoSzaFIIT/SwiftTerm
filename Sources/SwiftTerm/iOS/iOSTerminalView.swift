@@ -1609,11 +1609,14 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     var userScrolling = false
     private var updatingContentOffsetFromTerminal = false
     private var manualScrollOffsetWithinRow: CGFloat = 0
-    /// Whether the offset currently in place was written by this view rather than sampled from the
-    /// scroll view. It is consumed by the next sync, which is the only reader: see
-    /// `coastMovesTheViewport` for why a written offset is not something a coast sample can be
-    /// compared against.
-    private var offsetWasWrittenByTerminal = false
+    /// Whether the manual-scroll freeze has engaged at any point in the gesture now in flight —
+    /// finger-down phase and momentum coast together. See `coastMovesTheViewport`: it is what tells
+    /// a flick that began at the live tail (never froze) from a coast the reader has since overruled
+    /// by returning to the tail (froze earlier in the same gesture).
+    private var freezeEngagedDuringGesture = false
+    /// `isTracking` as of the previous sync, so the *first* sample with a finger down can be
+    /// recognised — that transition is where a gesture's scope opens.
+    private var wasTracking = false
 
     private var contentOffsetTolerance: CGFloat {
         1 / max(backingScaleFactor(), 1)
@@ -1652,9 +1655,6 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         updatingContentOffsetFromTerminal = true
         contentOffset = newContentOffset
         updatingContentOffsetFromTerminal = false
-        // Only when it actually wrote — the early return above leaves a scroll-view offset in place,
-        // and the next sample can still be compared against it.
-        offsetWasWrittenByTerminal = true
     }
 
     private func setManualScrolling(_ enabled: Bool) {
@@ -1683,11 +1683,15 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             return
         }
 
-        // Consumed here, before any early return: the offset now in place came from the scroll
-        // view — this method never runs for one this view wrote, that returns above — so whatever
-        // the flag says applies to the *previous* offset and to this call only.
-        let previousOffsetIsFromTheScrollView = !offsetWasWrittenByTerminal
-        offsetWasWrittenByTerminal = false
+        // A gesture's scope opens on the first sample with a finger down and runs to the next one,
+        // covering the momentum coast in between. It has to key off the *transition*: clearing on
+        // every tracked sample would forget a freeze that engaged mid-drag, which is precisely what
+        // the coast rule below needs to remember. An offset this view wrote returns above, so a
+        // re-pin can never open or close a scope.
+        if isTracking && !wasTracking {
+            freezeEngagedDuringGesture = false
+        }
+        wasTracking = isTracking
 
         let displayBuffer = terminal.displayBuffer
         let maxRow = maxDisplayRow(in: displayBuffer)
@@ -1717,13 +1721,14 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         // through history can leave that several times too small until the next
         // touch happens to resync it.
         //
-        // A frozen view always qualifies, and so does an unfrozen coast that is
-        // provably travelling *away* from the bottom — the flick that begins at the
-        // live tail, whose finger-down phase never leaves the at-bottom band above,
-        // so the freeze never engages and every pixel of travel happens here. See
-        // coastMovesTheViewport for why direction, not timing, is what separates
-        // that from the fling *to* the bottom under streaming output, which must
-        // not re-freeze.
+        // A frozen view always qualifies, and so does an unfrozen coast belonging to a
+        // gesture in which the freeze never engaged at all — the flick that begins at
+        // the live tail, whose finger-down phase never leaves the at-bottom band above,
+        // so every pixel of travel happens here. See coastMovesTheViewport for why
+        // gesture scope, not timing and not direction alone, is what separates that
+        // from a coast the reader has already overruled by returning to the tail: the
+        // fling *to* the bottom under streaming output, a jump home landed mid-coast,
+        // the caret pulling the viewport back. None of those may re-freeze.
         //
         // Deceleration only ever follows a real drag, and an offset this view wrote
         // itself returns at the top of this method, so neither branch can pick up a
@@ -1731,10 +1736,10 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         // insets, buffer shrink).
         let coasting = isDecelerating && coastMovesTheViewport(
             isFrozen: userScrolling,
+            freezeEngagedDuringGesture: freezeEngagedDuringGesture,
             offsetY: Double(offsetY),
             previousOffsetY: Double(previousOffsetY),
-            offsetTolerance: Double(contentOffsetTolerance),
-            previousOffsetIsFromTheScrollView: previousOffsetIsFromTheScrollView)
+            offsetTolerance: Double(contentOffsetTolerance))
         guard isTracking || coasting else {
             return
         }
@@ -1762,6 +1767,9 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         // key off isDragging: on device that stays true through the entire coast, so
         // it cannot distinguish an active drag from momentum at all.
         setManualScrolling(landing.freezesScrolling)
+        // Remembered for the rest of this gesture, which is what keeps a later release — the
+        // at-bottom band, a jump home, the caret — from being undone by the coast still in flight.
+        freezeEngagedDuringGesture = true
         manualScrollOffsetWithinRow = CGFloat(landing.offsetWithinRow)
         if displayBuffer.yDisp != landing.row {
             terminal.setViewYDisp(landing.row)

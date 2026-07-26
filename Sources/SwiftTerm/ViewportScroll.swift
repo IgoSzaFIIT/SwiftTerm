@@ -72,35 +72,44 @@ func viewportScrollLanding (targetOffsetY: Double,
 ///
 /// - **A view that is already frozen.** The content keeps visibly scrolling after the lift, so a
 ///   viewport left at the finger-lift row names rows the reader is no longer looking at.
-/// - **A view that is not frozen but whose offset is moving *away* from the bottom.** A flick that
-///   begins at the live tail spends its whole finger-down phase inside the at-bottom band, so the
-///   freeze never engages and every pixel of travel happens under momentum. Left alone, the
-///   viewport model stays pinned to the live tail while the reader coasts up into history.
+/// - **A view that is not frozen, from a gesture in which the freeze never engaged, whose offset is
+///   moving *away* from the bottom.** A flick that begins at the live tail spends its whole
+///   finger-down phase inside the at-bottom band, so the freeze never engages and every pixel of
+///   travel happens under momentum. Left alone, the viewport model stays pinned to the live tail
+///   while the reader coasts up into history.
 ///
-/// What it must **not** pick up is the fling *to* the bottom under streaming output: there the
-/// content grows faster than the coast, so sample after sample reads "not at the bottom yet" while
-/// the offset is still travelling toward the bottom — or standing still as the bottom recedes ahead
-/// of it. Freezing on one of those would re-freeze a view the reader just flung to the tail.
-/// Direction separates the two where timing cannot, so only an offset that actually moved up
-/// qualifies, and it must move by more than `offsetTolerance` — a sub-device-pixel drift at the end
-/// of a coast is noise, not travel. Pass the *clamped*, resting offsets: an overscroll bounce does
-/// come back down, and clamping keeps that from reading as travel into history.
+/// What it must **not** pick up is any coast the reader has *already overruled*. Three of those
+/// exist and they share one shape — the freeze engaged earlier in the same gesture, then something
+/// released it and put the viewport back on the live tail, while the coast from that gesture is
+/// still in flight:
 ///
-/// `previousOffsetIsFromTheScrollView` is what keeps that direction test honest. Not every offset a
-/// coast sample is compared against was sampled from the coast: the view also writes the offset
-/// itself — pinning to the tail as output arrives, landing a jump back to the bottom, following the
-/// caret — and while the freeze is off it does so *between* coast frames. Each of those writes moves
-/// the offset toward the bottom, so the next genuine sample reads as a move away from it and the
-/// direction test would freeze a view that is following output. Compared against a written offset
-/// there is nothing to read, so the answer is the frozen-only one; the sample after it has a real
-/// predecessor again, and a flick is caught one frame later instead of never.
+/// - The fling *to* the bottom under streaming output. Content grows faster than the coast, so once
+///   the at-bottom band releases the freeze, sample after sample reads "not at the bottom yet".
+/// - A jump back to the tail landed mid-coast. The viewport is re-pinned under a coast that is
+///   still travelling the other way.
+/// - The caret pulling the viewport home as output arrives, mid-coast, for the same reason.
+///
+/// Picking any of them up re-freezes a viewport the reader just sent back to the tail. **Gesture
+/// scope is what separates them from the flick**, where the freeze never engaged at all: a flick
+/// that begins at the live tail spends its whole finger-down phase inside the at-bottom band, so
+/// `freezeEngagedDuringGesture` is false for it and true for all three above. Timing cannot tell
+/// them apart — every one is post-lift deceleration on an unfrozen view — and neither can direction
+/// alone, since all three travel away from a bottom that has just moved.
+///
+/// Direction still has to hold too: the offset must have moved up by more than `offsetTolerance`, a
+/// sub-device-pixel drift at the end of a coast being noise rather than travel. Pass the *clamped*,
+/// resting offsets, so an overscroll bounce — which does come back down — cannot read as travel.
+///
+/// The scope opens when a finger goes down and closes at the next one, so a release that lands
+/// inside a gesture holds for the rest of it. That is deliberate: the reader's later act outranks
+/// the earlier fling, and the cost is only that the tail of one coast goes untracked.
 func coastMovesTheViewport (isFrozen: Bool,
+                            freezeEngagedDuringGesture: Bool,
                             offsetY: Double,
                             previousOffsetY: Double,
-                            offsetTolerance: Double,
-                            previousOffsetIsFromTheScrollView: Bool) -> Bool {
+                            offsetTolerance: Double) -> Bool {
     if isFrozen {
         return true
     }
-    return previousOffsetIsFromTheScrollView && offsetY < previousOffsetY - offsetTolerance
+    return !freezeEngagedDuringGesture && offsetY < previousOffsetY - offsetTolerance
 }
