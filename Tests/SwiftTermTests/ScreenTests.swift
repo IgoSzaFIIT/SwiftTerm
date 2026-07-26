@@ -248,6 +248,40 @@ final class ScreenTests {
         TerminalTestHarness.assertLineText(terminal.buffer, row: 2, equals: "5")
     }
 
+    /// The delegate is told when an erase blanked the entire visible screen, since that erase
+    /// moves no line and changes no counter a client could otherwise watch.
+    @Test func testVisibleScreenErasedIsReportedForWholeScreenErases() {
+        let (terminal, delegate) = TerminalTestHarness.makeTerminal(cols: 5, rows: 3, scrollback: 10)
+        terminal.feed(text: "1\r\n2\r\n3\r\n4\r\n5")
+        #expect(delegate.visibleScreenErasedCount == 0)
+
+        // ED 2 - the whole screen, wherever the cursor is
+        terminal.feed(text: "\(esc)[2J")
+        #expect(delegate.visibleScreenErasedCount == 1)
+
+        // ED 0 from the home position covers every visible row too (the `ESC[H ESC[J` idiom)
+        terminal.feed(text: "\(esc)[H\(esc)[J")
+        #expect(delegate.visibleScreenErasedCount == 2)
+
+        // RIS erases the screen as part of rebuilding the terminal
+        terminal.feed(text: "\(esc)c")
+        #expect(delegate.visibleScreenErasedCount == 3)
+    }
+
+    /// …and it is not reported for erases that leave visible rows standing, or for one that only
+    /// discards the scrollback.
+    @Test func testVisibleScreenErasedIsNotReportedForPartialErases() {
+        let (terminal, delegate) = TerminalTestHarness.makeTerminal(cols: 5, rows: 3, scrollback: 10)
+        terminal.feed(text: "1\r\n2\r\n3\r\n4\r\n5")
+
+        terminal.feed(text: "\(esc)[2;2H\(esc)[J")   // ED 0 below a cursor mid-screen
+        terminal.feed(text: "\(esc)[2;2H\(esc)[1J")  // ED 1 above a cursor mid-screen
+        terminal.feed(text: "\(esc)[3J")             // ED 3 - the scrollback, not the screen
+        terminal.feed(text: "\(esc)[2K")             // EL - one line
+
+        #expect(delegate.visibleScreenErasedCount == 0)
+    }
+
     /// Test EL 0 - Erase from cursor to end of line
     @Test func testEraseLineFromCursor() {
         let (terminal, _) = TerminalTestHarness.makeTerminal(cols: 10, rows: 1, scrollback: 0)

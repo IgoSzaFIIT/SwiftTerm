@@ -16,6 +16,11 @@ final class TerminalTestDelegate: TerminalDelegate {
     func bufferActivated(source: Terminal) {}
     func bell(source: Terminal) {}
 
+    private(set) var visibleScreenErasedCount = 0
+    func visibleScreenErased(source: Terminal) {
+        visibleScreenErasedCount += 1
+    }
+
     func send(source: Terminal, data: ArraySlice<UInt8>) {
         sentData.append(Array(data))
     }

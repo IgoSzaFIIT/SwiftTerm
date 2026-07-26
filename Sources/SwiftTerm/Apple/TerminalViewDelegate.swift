@@ -62,6 +62,17 @@ public protocol TerminalViewDelegate: AnyObject {
      * This method will be invoked when the host beeps.
      */
     func bell (source: TerminalView)
+
+    /**
+     * Invoked when the client application erased the whole visible screen — an erase-in-display
+     * covering every visible row, or a full reset. The rows are blanked in place: nothing is
+     * scrolled, trimmed or reflowed, so a client that keeps state anchored to buffer positions
+     * gets no other signal that their contents are gone. Anything in the scrollback above the
+     * visible screen still stands.
+     *
+     * The default implementation does nothing.
+     */
+    func visibleScreenErased (source: TerminalView)
     
     /**
      * This method is invoked when the client application has issued a OSC 52

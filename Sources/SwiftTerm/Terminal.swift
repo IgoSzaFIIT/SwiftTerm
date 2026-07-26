@@ -88,6 +88,20 @@ public protocol TerminalDelegate: AnyObject {
     /// The default implementation does nothing.
     func bufferActivated (source: Terminal)
 
+    /// Invoked when the client application erased the whole visible screen: an erase-in-display
+    /// that covered every visible row (`CSI 2 J`, and `CSI J`/`CSI 1 J` issued from the edge they
+    /// erase away from), or a full reset (RIS, DECCOLM).
+    ///
+    /// The rows are blanked **in place**: nothing is scrolled, trimmed or reflowed, so a front-end
+    /// watching the buffer's counters sees no other change from it. Front-ends that keep state
+    /// anchored to buffer positions — marks, annotations, decorations — should treat whatever they
+    /// recorded on the visible screen as gone; anything in the scrollback above it still stands.
+    /// The erased rows are the terminal's current `rows` rows starting at `buffer.yBase`, readable
+    /// here, as this is invoked synchronously while the sequence is processed.
+    ///
+    /// The default implementation does nothing.
+    func visibleScreenErased (source: Terminal)
+
     /// Invoked when synchronized output mode is toggled on or off.
     /// The default implementation does nothing.
     func synchronizedOutputChanged (source: Terminal, active: Bool)
@@ -2401,6 +2415,17 @@ open class Terminal {
     func cmdEraseInDisplay (_ pars: [Int], _ collect: cstring)
     {
         let p = pars.count == 0 ? 0 : pars [0]
+        // Whether this erase blanks every visible row.  "Erase all" always does; the directional
+        // ones do when the cursor sits at the edge they erase away from, which is how the second
+        // clear idiom in wide use spells it (`ESC[H ESC[J`).  Sampled before the erase runs - it
+        // does not move the cursor, but reading it up front keeps the test next to its reason.
+        let erasesWholeScreen: Bool
+        switch p {
+        case 0: erasesWholeScreen = buffer.y == 0 && buffer.x == 0
+        case 1: erasesWholeScreen = buffer.y == rows - 1 && buffer.x + 1 >= cols
+        case 2: erasesWholeScreen = true
+        default: erasesWholeScreen = false
+        }
         var j: Int
         switch p {
         case 0:
@@ -2449,6 +2474,9 @@ open class Terminal {
             break;
         default:
             break
+        }
+        if erasesWholeScreen {
+            tdel?.visibleScreenErased (source: self)
         }
     }
 
@@ -5198,6 +5226,9 @@ open class Terminal {
         cursorHidden = savedCursorHidden
         refresh (startRow: 0, endRow: rows-1)
         syncScrollArea ()
+        // A reset blanks the visible screen along with everything else, and on a buffer that has
+        // no scrollback yet it is the only thing about the buffer that an observer can see change.
+        tdel?.visibleScreenErased (source: self)
     }
 
     // Support for:
@@ -6739,6 +6770,10 @@ public extension TerminalDelegate {
     }
     
     func bufferActivated(source: Terminal) {
+        // nothing
+    }
+
+    func visibleScreenErased(source: Terminal) {
         // nothing
     }
 

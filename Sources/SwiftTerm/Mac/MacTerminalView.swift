@@ -2804,6 +2804,10 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         terminalDelegate?.bell (source: self)
     }
 
+    open func visibleScreenErased(source: Terminal) {
+        terminalDelegate?.visibleScreenErased (source: self)
+    }
+
     public func progressReport(source: Terminal, report: Terminal.ProgressReport) {
         if Thread.isMainThread {
             handleProgressReport(report)
@@ -2960,6 +2964,9 @@ extension TerminalViewDelegate {
         NSSound.beep()
     }
     
+    public func visibleScreenErased (source: TerminalView) {
+    }
+
     public func iTermContent (source: TerminalView, content: ArraySlice<UInt8>) {
     }
     
