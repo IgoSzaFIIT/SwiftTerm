@@ -553,11 +553,12 @@ public class EscapeSequenceParser {
         }
 
         switch command {
-        // G — Kitty graphics. Not a command this terminal implements when graphics are off, so it
-        // takes the same route as any other unrecognised APC: nothing is parsed or decoded, and
-        // nothing is written back.
-        case 0x47 where terminal.options.enableGraphics:
+        case 0x47 where terminal.options.enableGraphics:  // G — Kitty graphics
             terminal.handleKittyGraphics(content)
+        case 0x47:
+            // Graphics are off: the sequence is consumed and dropped. Deliberately *not* routed to
+            // the unknown-APC fallback — that leg logs, and a host can send these at will.
+            break
         default:
             apcHandlerFallback(command, content)
         }

@@ -149,6 +149,19 @@ final class GraphicsOptionTests {
         #expect(probe.sent.isEmpty)
     }
 
+    /// A refused `G` is dropped, not handed to the unknown-APC fallback: that leg logs, and a host
+    /// can send these as fast as it likes. Other APC commands still reach the fallback.
+    @Test func aRefusedKittySequenceDoesNotReachTheUnknownApcFallback() {
+        let (terminal, _) = makeTerminal(graphics: false)
+        var seen: [UInt8] = []
+        terminal.parser.apcHandlerFallback = { code, _ in seen.append(code) }
+
+        feedKitty(terminal, control: "a=T,f=24,s=1,v=1,t=d,c=1,r=1,i=1,U=1", payload: [1, 2, 3])
+        terminal.feed(text: "\u{1b}_Zwhatever\u{1b}\\")
+
+        #expect(seen == [UInt8(ascii: "Z")])
+    }
+
     @Test func sixelPayloadDrawsNothing() {
         let (terminal, probe) = makeTerminal(graphics: false)
         let before = screenText(terminal)
