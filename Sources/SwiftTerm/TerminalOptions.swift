@@ -68,6 +68,11 @@ public struct TerminalOptions {
     public var scrollback: Int
     /// Default size of the tabs, defaults to 8
     public var tabStopWidth: Int
+    /// Whether the terminal implements the inline image protocols — Kitty graphics and Sixel.
+    /// When `false` the corresponding sequences are ignored: nothing is decoded, no image data is
+    /// loaded from a file or from shared memory, no reply is sent, and Sixel is not advertised in
+    /// the primary device attributes. Defaults to `true`.
+    public var enableGraphics: Bool
     /// Whether to report that sixel support is present
     public var enableSixelReported:Bool
     /// Maximum total bytes to keep for kitty image data; defaults to 320MB and is clamped to 4GB.
@@ -87,12 +92,14 @@ public struct TerminalOptions {
                                                        screenReaderMode: false,
                                                        scrollback: 500,
                                                        tabStopWidth: 8,
+                                                       enableGraphics: true,
                                                        enableSixelReported: true,
                                                        kittyImageCacheLimitBytes: 320 * 1024 * 1024,
                                                        ansi256PaletteStrategy: .base16Lab,
                                                        regionalIndicatorWidth: .wide)
 
   public init(cols: Int = Self.default.cols, rows: Int = Self.default.rows, convertEol: Bool = Self.default.convertEol, termName: String = Self.default.termName, cursorStyle: CursorStyle = Self.default.cursorStyle, screenReaderMode: Bool = Self.default.screenReaderMode, scrollback: Int = Self.default.scrollback, tabStopWidth: Int = Self.default.tabStopWidth,
+              enableGraphics: Bool = Self.default.enableGraphics,
               enableSixelReported: Bool = Self.default.enableSixelReported, kittyImageCacheLimitBytes: Int = Self.default.kittyImageCacheLimitBytes, ansi256PaletteStrategy: Ansi256PaletteStrategy = Self.default.ansi256PaletteStrategy,
               regionalIndicatorWidth: RegionalIndicatorWidth = Self.default.regionalIndicatorWidth) {
         self.cols = cols
@@ -103,6 +110,7 @@ public struct TerminalOptions {
         self.screenReaderMode = screenReaderMode
         self.scrollback = scrollback
         self.tabStopWidth = tabStopWidth
+        self.enableGraphics = enableGraphics
         self.enableSixelReported = enableSixelReported
         self.kittyImageCacheLimitBytes = kittyImageCacheLimitBytes
         self.ansi256PaletteStrategy = ansi256PaletteStrategy

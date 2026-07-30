@@ -304,6 +304,21 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         setup()
     }
     
+    /// Creates a terminal view whose terminal is built with `options` instead of the defaults the
+    /// other initializers leave it to take. Only the grid geometry is recomputed from the view's
+    /// bounds once they are known; every other option is kept.
+    public init (frame: CGRect, font: UIFont? = nil, options: TerminalOptions)
+    {
+        self.fontSet = FontSet (font: font ?? FontSet.defaultFont)
+        cellDimension = CellDimension(width: 1, height: 1)
+        super.init (frame: frame)
+        isAccessibilityElement = true
+        accessibilityTraits.formUnion([.staticText, .causesPageTurn])
+        accessibilityTextualContext = .sourceCode
+        terminal = Terminal (delegate: self, options: options)
+        setup()
+    }
+
     public override init (frame: CGRect)
     {
         self.fontSet = FontSet (font: FontSet.defaultFont)

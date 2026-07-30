@@ -44,6 +44,7 @@ For a guide on customization, see <doc:Customization>.
 
 ### Graphics
 
+- ``enableGraphics``
 - ``enableSixelReported``
 - ``kittyImageCacheLimitBytes``
 

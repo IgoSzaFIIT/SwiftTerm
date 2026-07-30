@@ -33,6 +33,12 @@ Sixel support is advertised to querying applications when
 ``TerminalOptions/enableSixelReported`` is `true` (the default). Set it to `false`
 if you want to hide Sixel support from applications.
 
+``TerminalOptions/enableGraphics`` turns the inline image protocols off altogether —
+both Sixel and Kitty graphics. With it `false`, an APC `G` sequence and a Sixel DCS
+payload are ignored: nothing is decoded, no image data is loaded from a file or from
+shared memory, no reply is sent, and Sixel is not advertised whatever
+``TerminalOptions/enableSixelReported`` says.
+
 ## iTerm2 Inline Images
 
 iTerm2's [inline image protocol](https://iterm2.com/documentation-images.html)

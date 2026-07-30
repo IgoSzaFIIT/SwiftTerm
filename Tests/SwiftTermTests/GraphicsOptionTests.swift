@@ -1,0 +1,271 @@
+//
+//  GraphicsOptionTests.swift
+//
+//  `TerminalOptions.enableGraphics` — the switch for the two inline image protocols.
+//  Cases are written from the protocols' own grammars: the Kitty graphics protocol's control
+//  keys (`a` action, `t` transmission medium, `f` format, `q` response suppression) and the
+//  Sixel DCS grammar (`DCS q … ST`), plus DA1's capability list, where parameter 4 is Sixel.
+//
+#if os(macOS)
+import Foundation
+import Testing
+import Darwin
+
+@testable import SwiftTerm
+
+final class GraphicsOptionTests {
+    @_silgen_name("shm_open")
+    private static func swiftShmOpen(_ name: UnsafePointer<CChar>, _ oflag: Int32, _ mode: mode_t) -> Int32
+
+    /// Collects everything the terminal would write back to the host, and every bitmap it would
+    /// hand its view — the two observable ways a graphics sequence leaves a mark.
+    final class Probe: TerminalDelegate {
+        private(set) var sent: [UInt8] = []
+        private(set) var images: [(width: Int, height: Int)] = []
+
+        func send(source: Terminal, data: ArraySlice<UInt8>) {
+            sent.append(contentsOf: data)
+        }
+
+        func createImageFromBitmap(source: Terminal, bytes: inout [UInt8], width: Int, height: Int) {
+            images.append((width: width, height: height))
+        }
+
+        var sentText: String { String(bytes: sent, encoding: .utf8) ?? "" }
+    }
+
+    private func makeTerminal(graphics: Bool) -> (terminal: Terminal, probe: Probe) {
+        let probe = Probe()
+        let terminal = Terminal(delegate: probe,
+                                options: TerminalOptions(cols: 10, rows: 5, enableGraphics: graphics))
+        return (terminal, probe)
+    }
+
+    /// An APC `G` sequence: `ESC _ G <control> ; <base64 payload> ESC \`.
+    private func feedKitty(_ terminal: Terminal, control: String, payload: [UInt8]) {
+        let base64 = Data(payload).base64EncodedString()
+        terminal.feed(text: "\u{1b}_G\(control);\(base64)\u{1b}\\")
+    }
+
+    private func feedKitty(_ terminal: Terminal, control: String, path: String) {
+        feedKitty(terminal, control: control, payload: Array(path.utf8))
+    }
+
+    /// A minimal, valid Sixel DCS: one magenta pixel band, `DCS q … ST`.
+    private func feedSixel(_ terminal: Terminal) {
+        terminal.feed(text: "\u{1b}Pq#0;2;100;0;100#0~~@@vv@@~~@@~~$#0?????????????~~@@~~$\u{1b}\\")
+    }
+
+    private func screenText(_ terminal: Terminal) -> [String] {
+        TerminalTestHarness.visibleLinesText(buffer: terminal.buffer, terminal: terminal)
+    }
+
+    /// DA1's answer as its parameter list: `CSI ? p1 ; p2 ; … c`. Parameter 4 is Sixel.
+    private func deviceAttributeParameters(_ terminal: Terminal, _ probe: Probe) -> [String] {
+        terminal.feed(text: "\u{1b}[c")
+        let response = probe.sentText
+        guard let open = response.firstIndex(of: "?"), let close = response.lastIndex(of: "c") else {
+            return []
+        }
+        return response[response.index(after: open)..<close].split(separator: ";").map(String.init)
+    }
+
+    // MARK: - Off: nothing draws, nothing answers, nothing is opened
+
+    @Test func supportQueryIsUnanswered() {
+        let (terminal, probe) = makeTerminal(graphics: false)
+
+        // The runtime probe Kitty-capable clients send: `a=q` with a 1×1 RGB payload, expecting
+        // `;OK` back. Silence is what tells the client the terminal has no graphics protocol.
+        feedKitty(terminal, control: "i=31,s=1,v=1,a=q,t=d,f=24", payload: [0, 0, 0])
+
+        #expect(probe.sent.isEmpty)
+    }
+
+    @Test func directTransmitDrawsNothing() {
+        let (terminal, probe) = makeTerminal(graphics: false)
+        let before = screenText(terminal)
+
+        feedKitty(terminal, control: "a=T,f=24,s=1,v=1,t=d,c=1,r=1,i=1,U=1", payload: [1, 2, 3])
+
+        #expect(terminal.kittyGraphicsState.imagesById.isEmpty)
+        #expect(terminal.kittyGraphicsState.placementsByKey.isEmpty)
+        #expect(terminal.buffer.hasAnyImages == false)
+        #expect(screenText(terminal) == before)
+        #expect(probe.sent.isEmpty)
+    }
+
+    @Test func fileMediumIsNotRead() throws {
+        let (terminal, probe) = makeTerminal(graphics: false)
+        let file = try makeImageFile(named: "graphics-option-file")
+        defer { try? FileManager.default.removeItem(at: file.deletingLastPathComponent()) }
+        let before = screenText(terminal)
+
+        feedKitty(terminal, control: "a=T,f=24,s=1,v=1,t=f,c=1,r=1,i=1,U=1", path: file.path)
+
+        #expect(terminal.kittyGraphicsState.imagesById.isEmpty)
+        #expect(screenText(terminal) == before)
+        // Not even a refusal: an error string discriminates between a path that exists and one
+        // that does not, which is the oracle the silent refusal denies the host.
+        #expect(probe.sent.isEmpty)
+    }
+
+    @Test func temporaryFileMediumIsNotReadAndNotDeleted() throws {
+        let (terminal, probe) = makeTerminal(graphics: false)
+        // `t=t` hands the terminal ownership of the file: it reads it and unlinks it. A file still
+        // on disk afterwards is direct evidence the medium was never opened.
+        let file = try makeImageFile(named: "tty-graphics-protocol-option")
+        defer { try? FileManager.default.removeItem(at: file.deletingLastPathComponent()) }
+
+        feedKitty(terminal, control: "a=T,f=24,s=1,v=1,t=t,c=1,r=1,i=1,U=1", path: file.path)
+
+        #expect(FileManager.default.fileExists(atPath: file.path))
+        #expect(terminal.kittyGraphicsState.imagesById.isEmpty)
+        #expect(probe.sent.isEmpty)
+    }
+
+    @Test func sharedMemoryMediumIsNotOpened() {
+        let (terminal, probe) = makeTerminal(graphics: false)
+
+        feedKitty(terminal, control: "a=T,f=24,s=1,v=1,t=s,c=1,r=1,i=1,U=1", path: Self.shmName())
+
+        #expect(terminal.kittyGraphicsState.imagesById.isEmpty)
+        #expect(probe.sent.isEmpty)
+    }
+
+    @Test(.enabled(if: GraphicsOptionTests.sharedMemoryAvailable()))
+    func sharedMemoryObjectIsNotUnlinked() throws {
+        let (terminal, probe) = makeTerminal(graphics: false)
+        // `t=s` consumes the object: the terminal `shm_unlink`s whatever name it is handed,
+        // whether or not it could read it. An object still openable afterwards is direct evidence
+        // nothing reached that call.
+        let name = Self.shmName()
+        try #require(Self.createSharedMemory(name: name, bytes: [1, 2, 3]))
+        defer { _ = name.withCString { shm_unlink($0) } }
+
+        feedKitty(terminal, control: "a=T,f=24,s=1,v=1,t=s,c=1,r=1,i=1,U=1", path: name)
+
+        #expect(Self.sharedMemoryExists(name: name))
+        #expect(probe.sent.isEmpty)
+    }
+
+    @Test func sixelPayloadDrawsNothing() {
+        let (terminal, probe) = makeTerminal(graphics: false)
+        let before = screenText(terminal)
+
+        feedSixel(terminal)
+
+        #expect(probe.images.isEmpty)
+        #expect(terminal.buffer.hasAnyImages == false)
+        #expect(screenText(terminal) == before)
+    }
+
+    @Test func primaryDeviceAttributesOmitSixel() {
+        let (terminal, probe) = makeTerminal(graphics: false)
+
+        #expect(!deviceAttributeParameters(terminal, probe).contains("4"))
+    }
+
+    @Test func primaryDeviceAttributesOmitSixelEvenWhenSixelReportingIsAsked() {
+        let probe = Probe()
+        // The two options must not be able to disagree: graphics off wins over a caller that
+        // still asks for the Sixel advertisement.
+        let terminal = Terminal(delegate: probe,
+                                options: TerminalOptions(cols: 10, rows: 5,
+                                                         enableGraphics: false,
+                                                         enableSixelReported: true))
+
+        #expect(!deviceAttributeParameters(terminal, probe).contains("4"))
+    }
+
+    // MARK: - The vendored default is unchanged
+
+    @Test func defaultOptionsAnswerTheSupportQuery() {
+        let (terminal, probe) = makeTerminal(graphics: true)
+
+        feedKitty(terminal, control: "i=31,s=1,v=1,a=q,t=d,f=24", payload: [0, 0, 0])
+
+        #expect(probe.sentText.contains(";OK"))
+    }
+
+    @Test func defaultOptionsTransmitAndDisplay() {
+        let (terminal, _) = makeTerminal(graphics: true)
+
+        feedKitty(terminal, control: "a=T,f=24,s=1,v=1,t=d,c=1,r=1,i=1,U=1", payload: [1, 2, 3])
+
+        #expect(terminal.kittyGraphicsState.imagesById[1] != nil)
+        #expect(!terminal.kittyGraphicsState.placementsByKey.isEmpty)
+    }
+
+    @Test func defaultOptionsReadTheFileMedium() throws {
+        let (terminal, _) = makeTerminal(graphics: true)
+        let file = try makeImageFile(named: "graphics-option-file")
+        defer { try? FileManager.default.removeItem(at: file.deletingLastPathComponent()) }
+
+        feedKitty(terminal, control: "a=T,f=24,s=1,v=1,t=f,c=1,r=1,i=1,U=1", path: file.path)
+
+        #expect(terminal.kittyGraphicsState.imagesById[1] != nil)
+    }
+
+    @Test func defaultOptionsDecodeSixel() {
+        let (terminal, probe) = makeTerminal(graphics: true)
+
+        feedSixel(terminal)
+
+        #expect(!probe.images.isEmpty)
+    }
+
+    @Test func defaultOptionsAdvertiseSixel() {
+        let (terminal, probe) = makeTerminal(graphics: true)
+
+        #expect(deviceAttributeParameters(terminal, probe).contains("4"))
+    }
+
+    // MARK: - Helpers
+
+    /// A 1×1 RGB image (`f=24`, `s=1`, `v=1`) in a directory of its own, so the temp-file medium's
+    /// `tty-graphics-protocol` naming requirement can be met by the file name.
+    private func makeImageFile(named name: String) throws -> URL {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("swiftterm-graphics-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let file = dir.appendingPathComponent(name)
+        try Data([1, 2, 3]).write(to: file)
+        return file
+    }
+
+    /// macOS caps a POSIX shared-memory name at 31 bytes, so the name stays short deliberately —
+    /// a longer one fails to create and would make the case vacuous.
+    private static func shmName() -> String {
+        "/stg-\(UUID().uuidString.prefix(8))"
+    }
+
+    private static func createSharedMemory(name: String, bytes: [UInt8]) -> Bool {
+        let fd = name.withCString { swiftShmOpen($0, O_CREAT | O_EXCL | O_RDWR, 0o600) }
+        guard fd >= 0 else { return false }
+        defer { close(fd) }
+        guard ftruncate(fd, off_t(bytes.count)) == 0 else {
+            _ = name.withCString { shm_unlink($0) }
+            return false
+        }
+        return true
+    }
+
+    private static func sharedMemoryExists(name: String) -> Bool {
+        let fd = name.withCString { swiftShmOpen($0, O_RDONLY, 0) }
+        guard fd >= 0 else { return false }
+        close(fd)
+        return true
+    }
+
+    /// POSIX shared memory is unavailable in some sandboxes; the cases that need it are required
+    /// rather than silently passing.
+    static func sharedMemoryAvailable() -> Bool {
+        let name = shmName()
+        guard createSharedMemory(name: name, bytes: [0]) else { return false }
+        _ = name.withCString { shm_unlink($0) }
+        return true
+    }
+}
+
+#endif

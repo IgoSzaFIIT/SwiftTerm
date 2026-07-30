@@ -178,11 +178,15 @@ extension TerminalView {
         // Get the ascent + descent + leading from the font, already scaled for the font's size
         self.cellDimension = computeFontDimensions ()
 
+        // Only the grid geometry comes from the view; every other option is carried over from the
+        // terminal this view already has, so a terminal built with options of its own — or one
+        // reconfigured since (`changeScrollback`) — is not reset to the defaults by a re-setup.
         let zeroSizedView = width == 0 && height == 0
-        let terminalOptions = zeroSizedView
-            ? (terminal?.options ?? .default)
-            : TerminalOptions(cols: Int(width / cellDimension.width),
-                              rows: Int(height / cellDimension.height))
+        var terminalOptions = terminal?.options ?? .default
+        if !zeroSizedView {
+            terminalOptions.cols = Int(width / cellDimension.width)
+            terminalOptions.rows = Int(height / cellDimension.height)
+        }
 
         if terminal == nil {
             terminal = Terminal(delegate: self, options: terminalOptions)

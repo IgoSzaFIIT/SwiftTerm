@@ -553,7 +553,11 @@ public class EscapeSequenceParser {
         }
 
         switch command {
-        case 0x47: terminal.handleKittyGraphics(content)  // G
+        // G — Kitty graphics. Not a command this terminal implements when graphics are off, so it
+        // takes the same route as any other unrecognised APC: nothing is parsed or decoded, and
+        // nothing is written back.
+        case 0x47 where terminal.options.enableGraphics:
+            terminal.handleKittyGraphics(content)
         default:
             apcHandlerFallback(command, content)
         }
@@ -565,7 +569,7 @@ public class EscapeSequenceParser {
         // Match on collect + code
         if collect == [0x24] && code == 0x71 {  // "$q"
             return Terminal.DECRQSS(terminal: terminal)
-        } else if collect.isEmpty && code == 0x71 {  // "q"
+        } else if collect.isEmpty && code == 0x71 && terminal.options.enableGraphics {  // "q"
             return SixelDcsHandler(terminal: terminal)
         }
         return nil

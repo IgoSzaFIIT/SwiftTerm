@@ -4632,7 +4632,9 @@ open class Terminal {
         let name = options.termName
         if collect == [] {
             let termVt525 = 65
-            let sixel = options.enableSixelReported ? ";4" : ""
+            // A terminal that does not implement graphics never claims parameter 4, whatever
+            // `enableSixelReported` asks for — the two options cannot disagree.
+            let sixel = (options.enableGraphics && options.enableSixelReported) ? ";4" : ""
             let cols132 = 1
             let printer = 2
             let decsera = 6
