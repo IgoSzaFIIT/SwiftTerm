@@ -12,9 +12,9 @@ import Foundation
 /// new tap fell from the one before it in time and space. The tap **continues** the run
 /// (`previousCount + 1`) only when it lands within *both* `maxInterval` seconds and `maxDistance`
 /// of the previous tap; any slower or farther tap **restarts** the run at `1`. This is the
-/// double-tap-window rule that restores word/line selection without the multi-tap
-/// `UITapGestureRecognizer`s (removed for the iOS 26.5 delayed-touch crash); the caller derives
-/// `maxDistance` from the cell size.
+/// double-tap-window rule that gives word/line selection without the multi-tap
+/// `UITapGestureRecognizer`s (see `setupGestures`); the caller derives `maxDistance` from the
+/// cell size.
 func tapRunLength (previousCount: Int,
                    interval: TimeInterval,
                    distance: Double,

@@ -2,8 +2,8 @@ import XCTest
 @testable import SwiftTerm
 
 /// The pure double-tap-window rule behind `TerminalView.registerLocalTap` — the tap counting that
-/// restores double-tap word-select / triple-tap line-select after the multi-tap
-/// `UITapGestureRecognizer`s were removed for the iOS 26.5 delayed-touch crash. The gesture
+/// gives double-tap word-select / triple-tap line-select without multi-tap
+/// `UITapGestureRecognizer`s (see `setupGestures`). The gesture
 /// plumbing can't be unit-tested, but this rule can, and it's the part a future upstream merge could
 /// silently clobber. Thresholds are passed in, not the shipped tuning: every expectation pins the
 /// *rule* ("continue only within both windows, else restart at 1"), never the specific 0.3 s /

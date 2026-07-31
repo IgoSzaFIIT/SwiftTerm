@@ -626,9 +626,8 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     var lastLongSelectRegion = CGRect.zero
 
     // Multi-tap detection, counted in `singleTap` instead of via UITapGestureRecognizers with
-    // numberOfTapsRequired > 1 — those crash UIKit's delayed-touch bookkeeping on the first tap on
-    // the iOS 26.5 runtime (see setupGestures). `registerLocalTap` groups taps that are close in
-    // both time and space, restoring double-tap word-select and triple-tap line-select.
+    // numberOfTapsRequired > 1 (see setupGestures). `registerLocalTap` groups taps that are close
+    // in both time and space, giving double-tap word-select and triple-tap line-select.
     var lastLocalTapTime: TimeInterval = 0
     var lastLocalTapLocation: CGPoint = .zero
     var localTapCount: Int = 0
@@ -784,8 +783,8 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
                 }
             } else {
                 // Mouse reporting is off (or shift bypasses it): this is a local selection gesture.
-                // Count consecutive close taps to restore word/line selection without the
-                // multi-tap recognizers that crash on iOS 26.5 (see setupGestures).
+                // Count consecutive close taps for word/line selection, in place of the
+                // multi-tap recognizers (see setupGestures).
                 switch registerLocalTap(gestureRecognizer) {
                 case 2:
                     selectWord(at: tapHit)
@@ -857,9 +856,9 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     /// Registers a tap for multi-tap counting and returns the running length of the current run of
     /// consecutive taps (1, 2, 3, …). A tap counts as continuing the run only when it lands within
     /// the double-tap window of the previous one in **both** time and space; a slower or farther tap
-    /// starts a fresh run at 1. This is what restores double-tap word-select and triple-tap
-    /// line-select after the multi-tap `UITapGestureRecognizer`s were removed for the iOS 26.5
-    /// delayed-touch crash (setupGestures) — the counting lives in the single-tap handler instead.
+    /// starts a fresh run at 1. This is what gives double-tap word-select and triple-tap
+    /// line-select without multi-tap `UITapGestureRecognizer`s (setupGestures) — the counting
+    /// lives in the single-tap handler instead.
     /// The run-length rule itself is the platform-free `tapRunLength` so it can be unit-tested.
     func registerLocalTap (_ gestureRecognizer: UIGestureRecognizer) -> Int {
         let now = Date ().timeIntervalSinceReferenceDate
@@ -1128,9 +1127,13 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     
     func setupGestures ()
     {
-        // Same iOS 26.5 delayed-touch crash as below: the scroll view's own content-touch
-        // delay (delaysContentTouches, default true) walks the identical broken UIKit path
-        // on the first tap. Deliver content touches immediately.
+        // Deliver content touches immediately, as this view has always done. The property gates
+        // touch delivery to *content subviews*, and none here take touches — the grid is drawn,
+        // and the caret, Metal and progress-bar subviews all disable interaction — while every
+        // gesture below is a recognizer on the scroll view itself, which the property does not
+        // gate. So it makes no difference either way that anyone has measured; it was originally
+        // set for the delayed-touch crash noted below, and it is left as it is rather than
+        // churned back to the default for no observed effect.
         delaysContentTouches = false
 
         let longPress = UILongPressGestureRecognizer (target: self, action: #selector(longPress(_:)))
@@ -1140,26 +1143,15 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         let singleTap = UITapGestureRecognizer (target: self, action: #selector(singleTap(_:)))
         addGestureRecognizer(singleTap)
         
-        // The multi-tap recognizers are disabled. On the iOS 26.5 runtime any
-        // UITapGestureRecognizer with numberOfTapsRequired > 1 on this view crashes
-        // UIKit's delayed-touch bookkeeping the moment a first tap lands:
-        //   NSInvalidArgumentException -[__NSArrayM insertObject:atIndex:] (nil)
-        //   in -[UIGestureRecognizer _delayTouchesForEvent:inPhase:]
-        // Single tap + long press alone are fine; adding a 2-tap recognizer (with or
-        // without the require(toFail:) chains) reproduces it every time. Cost: double-tap
-        // word-select and triple-tap line-select are gone until a consumer restores them
-        // (tap-counting inside singleTap, or re-enabling these once the regression is fixed).
-        //
-        // let doubleTap = UITapGestureRecognizer (target: self, action: #selector(doubleTap(_:)))
-        // doubleTap.numberOfTapsRequired = 2
-        // addGestureRecognizer(doubleTap)
-        //
-        // let tripleTap = UITapGestureRecognizer (target: self, action: #selector(tripleTap(_:)))
-        // tripleTap.numberOfTapsRequired = 3
-        // addGestureRecognizer(tripleTap)
-        //
-        // singleTap.require(toFail: doubleTap)
-        // doubleTap.require(toFail: tripleTap)
+        // No multi-tap recognizers here, deliberately: word-select and line-select are counted
+        // inside `singleTap` instead, by `registerLocalTap` / `tapRunLength` — consecutive taps
+        // close in both time and space select the word, then the line. The counting is
+        // platform-free and unit-tested (MultiTapCountingTests), where a recognizer chain can
+        // only be tested by driving a device. It was originally written around a UIKit
+        // delayed-touch crash on iOS 26.5; that crash was re-measured on 2026-07-31 and no
+        // longer reproduces, but the counting stays on its own merit. The stock `doubleTap` /
+        // `tripleTap` handlers earlier in this file are kept unwired — they are internal, so
+        // wiring them up is an edit here rather than something a consumer can do.
     }
 
     func setupLinkReportingInteractions ()
