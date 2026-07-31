@@ -1970,7 +1970,14 @@ open class Terminal {
             if kv["inline"] != "1" {
                 break
             }
-            
+
+            // Graphics are off: the inline image is consumed and dropped. Deliberately *not*
+            // handed to `iTermContent` — that leg never sees an inline image when graphics are on
+            // either, so turning them off must not start feeding it image payloads.
+            if !options.enableGraphics {
+                return
+            }
+
             guard let imgData = Data(base64Encoded: Data(data [colonIdx+1..<data.endIndex])) else {
                 return
             }

@@ -68,10 +68,12 @@ public struct TerminalOptions {
     public var scrollback: Int
     /// Default size of the tabs, defaults to 8
     public var tabStopWidth: Int
-    /// Whether the terminal implements the inline image protocols — Kitty graphics and Sixel.
-    /// When `false` the corresponding sequences are ignored: nothing is decoded, no image data is
-    /// loaded from a file or from shared memory, no reply is sent, and Sixel is not advertised in
-    /// the primary device attributes. Defaults to `true`.
+    /// Whether the terminal implements the inline image protocols — Kitty graphics, Sixel and
+    /// iTerm2's inline images. When `false` the corresponding sequences are ignored: nothing is
+    /// decoded, no image data is loaded from a file or from shared memory, no reply is sent, and
+    /// Sixel is not advertised in the primary device attributes. iTerm2's `OSC 1337` is otherwise
+    /// unaffected — only its inline image is gated, and every other use of that sequence still
+    /// reaches ``TerminalDelegate/iTermContent(source:content:)``. Defaults to `true`.
     public var enableGraphics: Bool
     /// Whether to report that sixel support is present
     public var enableSixelReported:Bool

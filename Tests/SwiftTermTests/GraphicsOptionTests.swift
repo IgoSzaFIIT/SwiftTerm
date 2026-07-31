@@ -1,10 +1,11 @@
 //
 //  GraphicsOptionTests.swift
 //
-//  `TerminalOptions.enableGraphics` — the switch for the two inline image protocols.
+//  `TerminalOptions.enableGraphics` — the switch for the three inline image protocols.
 //  Cases are written from the protocols' own grammars: the Kitty graphics protocol's control
-//  keys (`a` action, `t` transmission medium, `f` format, `q` response suppression) and the
-//  Sixel DCS grammar (`DCS q … ST`), plus DA1's capability list, where parameter 4 is Sixel.
+//  keys (`a` action, `t` transmission medium, `f` format, `q` response suppression), the
+//  Sixel DCS grammar (`DCS q … ST`) and iTerm2's `OSC 1337 ; File=…:<base64>`, plus DA1's
+//  capability list, where parameter 4 is Sixel.
 //
 #if os(macOS)
 import Foundation
@@ -22,6 +23,8 @@ final class GraphicsOptionTests {
     final class Probe: TerminalDelegate {
         private(set) var sent: [UInt8] = []
         private(set) var images: [(width: Int, height: Int)] = []
+        private(set) var encodedImages: [Int] = []
+        private(set) var iTermPassThrough: [String] = []
 
         func send(source: Terminal, data: ArraySlice<UInt8>) {
             sent.append(contentsOf: data)
@@ -29,6 +32,14 @@ final class GraphicsOptionTests {
 
         func createImageFromBitmap(source: Terminal, bytes: inout [UInt8], width: Int, height: Int) {
             images.append((width: width, height: height))
+        }
+
+        func createImage(source: Terminal, data: Data, width: ImageSizeRequest, height: ImageSizeRequest, preserveAspectRatio: Bool) {
+            encodedImages.append(data.count)
+        }
+
+        func iTermContent(source: Terminal, content: ArraySlice<UInt8>) {
+            iTermPassThrough.append(String(bytes: content, encoding: .utf8) ?? "")
         }
 
         var sentText: String { String(bytes: sent, encoding: .utf8) ?? "" }
@@ -55,6 +66,16 @@ final class GraphicsOptionTests {
     private func feedSixel(_ terminal: Terminal) {
         terminal.feed(text: "\u{1b}Pq#0;2;100;0;100#0~~@@vv@@~~@@~~$#0?????????????~~@@~~$\u{1b}\\")
     }
+
+    /// iTerm2's inline image: `OSC 1337 ; File=<arguments> : <base64 file contents> BEL`, with
+    /// `inline=1` asking for it to be drawn in the grid rather than handed to the embedder.
+    private func feedITerm2Inline(_ terminal: Terminal, arguments: String = "inline=1;width=4;height=2") {
+        terminal.feed(text: "\u{1b}]1337;File=\(arguments):\(Self.onePixelPngBase64)\u{07}")
+    }
+
+    /// A 1×1 PNG — the smallest payload `createImage` will decode.
+    private static let onePixelPngBase64 =
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
 
     private func screenText(_ terminal: Terminal) -> [String] {
         TerminalTestHarness.visibleLinesText(buffer: terminal.buffer, terminal: terminal)
@@ -173,6 +194,54 @@ final class GraphicsOptionTests {
         #expect(screenText(terminal) == before)
     }
 
+    // MARK: - iTerm2 inline images
+
+    /// The third inline image protocol: `OSC 1337 ; File=…;inline=1 : <base64>` carries the image
+    /// in band and asks for it in the grid. With graphics off nothing is decoded.
+    @Test func iTerm2InlineImageIsNotDecoded() {
+        let (terminal, probe) = makeTerminal(graphics: false)
+        let before = screenText(terminal)
+
+        feedITerm2Inline(terminal)
+
+        #expect(probe.encodedImages.isEmpty)
+        #expect(terminal.buffer.hasAnyImages == false)
+        #expect(screenText(terminal) == before)
+    }
+
+    /// A refused inline image is consumed and dropped, not re-routed to the embedder's
+    /// `iTermContent` leg — that leg never sees an inline image when graphics are on either, so
+    /// turning them off must not start feeding it image payloads.
+    @Test func aRefusedInlineImageIsNotHandedToTheEmbedder() {
+        let (terminal, probe) = makeTerminal(graphics: false)
+
+        feedITerm2Inline(terminal)
+
+        #expect(probe.iTermPassThrough.isEmpty)
+    }
+
+    /// `OSC 1337` is iTerm2's whole extension channel, not an image sequence — `SetMark`,
+    /// `CurrentDir` and the rest ride it. The gate is the image branch alone, so everything else
+    /// still reaches the embedder.
+    @Test func anOrdinaryITerm2SequenceStillReachesTheEmbedder() {
+        let (terminal, probe) = makeTerminal(graphics: false)
+
+        terminal.feed(text: "\u{1b}]1337;CurrentDir=/somewhere\u{07}")
+
+        #expect(probe.iTermPassThrough == ["CurrentDir=/somewhere"])
+    }
+
+    /// The non-inline form (`inline=0`) is a download the embedder is meant to handle, not
+    /// something the terminal draws — it is unaffected by the graphics switch.
+    @Test func theNonInlineFormIsUnaffected() {
+        let (terminal, probe) = makeTerminal(graphics: false)
+
+        feedITerm2Inline(terminal, arguments: "inline=0;name=Zm9v")
+
+        #expect(probe.encodedImages.isEmpty)
+        #expect(probe.iTermPassThrough.count == 1)
+    }
+
     @Test func primaryDeviceAttributesOmitSixel() {
         let (terminal, probe) = makeTerminal(graphics: false)
 
@@ -226,6 +295,14 @@ final class GraphicsOptionTests {
         feedSixel(terminal)
 
         #expect(!probe.images.isEmpty)
+    }
+
+    @Test func defaultOptionsDecodeTheITerm2InlineImage() {
+        let (terminal, probe) = makeTerminal(graphics: true)
+
+        feedITerm2Inline(terminal)
+
+        #expect(!probe.encodedImages.isEmpty)
     }
 
     @Test func defaultOptionsAdvertiseSixel() {

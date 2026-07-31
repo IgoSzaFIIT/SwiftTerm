@@ -187,7 +187,7 @@ Key options:
 | `termName` | `"xterm-256color"` | Value reported for `TERM` |
 | `cursorStyle` | `.blinkBlock` | Initial cursor appearance |
 | `screenReaderMode` | `false` | Accessibility mode |
-| `enableGraphics` | `true` | Implement the inline image protocols (Kitty graphics, Sixel) |
+| `enableGraphics` | `true` | Implement the inline image protocols (Kitty graphics, Sixel, iTerm2 inline images) |
 | `enableSixelReported` | `true` | Advertise Sixel support to applications |
 | `kittyImageCacheLimitBytes` | 320 MB | Memory limit for Kitty image cache |
 | `ansi256PaletteStrategy` | `.base16Lab` | 256-color palette generation strategy |
