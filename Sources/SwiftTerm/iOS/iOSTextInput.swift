@@ -294,9 +294,22 @@ extension TerminalView: UITextInput {
         if let previouslyMarkedRange = _markedTextRange {
             // Ensure that multi-char input (Chinese-Japanese keyboards) works:
             if let previouslyMarkedText = text(in: previouslyMarkedRange) {
+                // The system ends a composition as well as the user does — moving focus away, or
+                // tearing the text input session down — so this commit is not a keystroke. A
+                // newline inside it would go to the host as a return that was never pressed, so
+                // the text is committed without it.
+                let committed = previouslyMarkedText
+                    .split(omittingEmptySubsequences: false, whereSeparator: \.isNewline)
+                    .joined()
+                if committed.count > 0 {
+                    uitiLog("unmarkText commit:\(committed.debugDescription) range:\(previouslyMarkedRange)")
+                    insertText(committed)
+                    return
+                }
                 if previouslyMarkedText.count > 0 {
-                    uitiLog("unmarkText commit:\(previouslyMarkedText.debugDescription) range:\(previouslyMarkedRange)")
-                    insertText(previouslyMarkedText)
+                    // Nothing but newlines: drop the composition rather than commit it.
+                    uitiLog("unmarkText drop:\(previouslyMarkedText.debugDescription) range:\(previouslyMarkedRange)")
+                    setMarkedText(nil, selectedRange: NSRange(location: 0, length: 0))
                     return
                 }
             }
