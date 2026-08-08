@@ -2912,28 +2912,11 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         }
     }
     
-    /// A press the system takes away is a press that is over: the key is no longer down, so the
-    /// repeat timer has to go the way `pressesEnded` sends it. Left armed, it keeps firing once
-    /// the run loop resumes — a cancellation the app is not told about is precisely the case
-    /// where nothing else will stop it. No key event is reported for a cancelled press: the key
-    /// was never released, and a release the user did not perform is not ours to report.
-    public override func pressesCancelled(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
-        keyRepeat?.invalidate()
-        keyRepeat = nil
-        for press in presses {
-            guard let key = press.key else { continue }
-            switch key.keyCode {
-            case .keyboardLeftGUI, .keyboardRightGUI:
-                activeCommandKeys.remove(key.keyCode)
-            default:
-                break
-            }
-        }
-        commandActive = !activeCommandKeys.isEmpty
-        super.pressesCancelled(presses, with: event)
-    }
-
-    public override func pressesEnded(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+    /// Everything a key leaving the down state settles, whichever way it left: the repeat it
+    /// armed, the command-key bookkeeping, and the link highlight that modifier was drawing.
+    /// Shared by `pressesEnded` and `pressesCancelled` — a highlight left standing because the
+    /// press was taken away rather than released is ink on the screen nothing is holding up.
+    private func settleReleasedPresses(_ presses: Set<UIPress>) {
         keyRepeat?.invalidate()
         keyRepeat = nil
         let wasCommandActive = commandActive
@@ -2963,6 +2946,20 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
                 queuePendingDisplay()
             }
         }
+    }
+
+    /// A press the system takes away is a press that is over: the key is no longer down, so it
+    /// settles exactly the way `pressesEnded` settles one. Left armed, the repeat keeps firing
+    /// once the run loop resumes — a cancellation the app is not told about is precisely the
+    /// case where nothing else will stop it. No key event is reported for a cancelled press: the
+    /// key was never released, and a release the user did not perform is not ours to report.
+    public override func pressesCancelled(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        settleReleasedPresses(presses)
+        super.pressesCancelled(presses, with: event)
+    }
+
+    public override func pressesEnded(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        settleReleasedPresses(presses)
         let flags = terminal.keyboardEnhancementFlags
         if flags.contains(.reportEvents) {
             for press in presses {

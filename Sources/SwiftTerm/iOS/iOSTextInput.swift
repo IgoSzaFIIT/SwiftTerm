@@ -298,9 +298,7 @@ extension TerminalView: UITextInput {
                 // tearing the text input session down — so this commit is not a keystroke. A
                 // newline inside it would go to the host as a return that was never pressed, so
                 // the text is committed without it.
-                let committed = previouslyMarkedText
-                    .split(omittingEmptySubsequences: false, whereSeparator: \.isNewline)
-                    .joined()
+                let committed = previouslyMarkedText.filter { !$0.isNewline }
                 if committed.count > 0 {
                     uitiLog("unmarkText commit:\(committed.debugDescription) range:\(previouslyMarkedRange)")
                     insertText(committed)
