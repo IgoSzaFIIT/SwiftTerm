@@ -139,6 +139,21 @@ extension TerminalView {
         self.colors = Array(repeating: nil, count: 256)
         self.trueColors = [:]
     }
+
+    /// Releases rendering state that the next draw regenerates: the attribute and color caches
+    /// and the layer's backing store. Intended for memory-pressure responses; the terminal's
+    /// contents are untouched.
+    public func releaseRegenerableCaches ()
+    {
+        resetCaches ()
+        #if os(macOS)
+        layer?.contents = nil
+        needsDisplay = true
+        #else
+        layer.contents = nil
+        setNeedsDisplay (bounds)
+        #endif
+    }
     
     // This is invoked when the font changes to recompute state
     func resetFont()
