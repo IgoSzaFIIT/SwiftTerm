@@ -3081,6 +3081,12 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         return (width, height)
     }
     
+    /// Declared on the class, not in an extension: a witness in an extension cannot be overridden by a subclass.
+    open func setCursorColor(source: Terminal, color: Color?) {
+        source.cursorColor = color
+        setCursorColor(source: source, color: color, textColor: nil)
+    }
+
     open func mouseModeChanged(source: Terminal) {
         if source.mouseMode != .off {
             enableMousePanGesture()
