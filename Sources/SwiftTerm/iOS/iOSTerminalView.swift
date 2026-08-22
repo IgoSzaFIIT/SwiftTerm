@@ -599,26 +599,38 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     ///  - pos: the location where this was triggered in the buffer, it used at a later point
     ///  to auto-select a word
     func showContextMenu (forRegion: CGRect, pos: Position) {
-        let items: [UIMenuItem] = extraMenuActions.map { UIMenuItem (title: $0.title, action: $0.action) }
-
         lastLongSelect = pos
         lastLongSelectRegion = forRegion
 
-        //GAR: Declutter context menu
-        //items.append (UIMenuItem(title: "Reset", action: #selector(resetCmd)))
-        
-        // Configure the shared menu controller
-        let menuController = UIMenuController.shared
-        menuController.menuItems = items
-        
-        // Set the location of the menu in the view.
-        //let menuLocation = CGRect (origin: at, size: CGSize (width: cellDimension.width, height: cellDimension.height))
-        menuController.showMenu(from: self, rect: forRegion)
+        editMenuInteraction.presentEditMenu (
+            with: UIEditMenuConfiguration (identifier: nil,
+                                           sourcePoint: CGPoint (x: forRegion.midX, y: forRegion.midY)))
     }
+
+    /// The entries the edit menu offers in the current state: the built-in actions followed by
+    /// `extraMenuActions`, each filtered through `canPerformAction(_:withSender:)`.
+    public func editMenuEntries () -> [(title: String, action: Selector)] {
+        let builtIn: [(title: String, action: Selector)] = [
+            (title: "Copy", action: #selector(copy(_:))),
+            (title: "Paste", action: #selector(paste(_:))),
+            (title: "Select", action: #selector(select(_:))),
+            (title: "Select All", action: #selector(selectAll(_:)))
+        ]
+        return (builtIn + extraMenuActions).filter { canPerformAction ($0.action, withSender: nil) }
+    }
+
+    lazy var editMenuInteraction: UIEditMenuInteraction = {
+        let interaction = UIEditMenuInteraction (delegate: self)
+        addInteraction (interaction)
+        return interaction
+    }()
+
+    var isEditMenuVisible = false
     
     /// Extra entries to show in the long-press context menu, appended after the built-in ones.
     /// Each is a title and the responder action the item invokes; the embedder implements the
-    /// action and gates it from `canPerformAction(_:withSender:)` as usual.
+    /// action **on the view** and gates it from `canPerformAction(_:withSender:)` as usual - the
+    /// menu invokes it on the view, so an action living further up the responder chain is not found.
     public var extraMenuActions: [(title: String, action: Selector)] = []
 
     // This is a position relative to the buffer
@@ -650,12 +662,8 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     @objc func longPress (_ gestureRecognizer: UILongPressGestureRecognizer)
     {
          if gestureRecognizer.state == .began {
-             let _ = self.becomeFirstResponder()
-             let tapLocation = gestureRecognizer.location(in: gestureRecognizer.view)
-             let tapRegion = makeContextMenuRegionForTap (point: tapLocation)
-             
-             showContextMenu (forRegion: tapRegion,
-                              pos: calculateTapHit (gesture: gestureRecognizer).grid)
+             // constraint: never take first responder here - it raises the keyboard, and the menu is lost in the raise.
+             showStandardContextMenu (at: gestureRecognizer.location (in: gestureRecognizer.view))
           }
     }
     
@@ -795,8 +803,8 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
                         selection.selectNone()
                         disableSelectionPanGesture()
                     }
-                    if UIMenuController.shared.isMenuVisible {
-                        UIMenuController.shared.hideMenu()
+                    if isEditMenuVisible {
+                        editMenuInteraction.dismissMenu()
                     } else {
                         let location = gestureRecognizer.location(in: gestureRecognizer.view)
                         let displayBuffer = terminal.displayBuffer
@@ -1454,21 +1462,11 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         }
     }
 
-    /// Programmatically presents SwiftTerm's standard Copy / Paste /
-    /// Select All context menu at the given point in the terminal's
-    /// coordinate space. Mirrors the path the built-in long-press
-    /// gesture takes — becomes first responder, computes the menu
-    /// region around the tap point, then calls the existing internal
-    /// `showContextMenu(forRegion:pos:)` presenter.
-    ///
-    /// Useful when a host app replaces the built-in long-press gesture
-    /// with custom behaviour (e.g. a cursor-drag mode) but still wants
-    /// the existing menu as a fallback for release-without-movement.
+    /// Selects the word at `point` in the terminal's coordinate space and presents the edit menu
+    /// over it — the path the built-in long-press gesture takes. Takes no first responder, so
+    /// whatever state the keyboard was in is the state it stays in.
     public func showStandardContextMenu(at point: CGPoint) {
-        _ = becomeFirstResponder()
-        let region = makeContextMenuRegionForTap(point: point)
-        let hit = calculateTapHit(point: point)
-        showContextMenu(forRegion: region, pos: hit.grid)
+        selectWord (at: calculateTapHit (point: point).grid)
     }
 
     var lineAscent: CGFloat = 0
@@ -3063,7 +3061,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
 #endif
             
             if !self.selection.active {
-                UIMenuController.shared.hideMenu()
+                self.editMenuInteraction.dismissMenu()
                 self.selection.selectNone()
                 self.disableSelectionPanGesture()
             }
@@ -3168,6 +3166,31 @@ extension TerminalViewDelegate {
     
     public func clipboardRead(source: TerminalView) -> Data? {
         return nil
+    }
+}
+
+extension TerminalView: UIEditMenuInteractionDelegate {
+    // constraint: the items come from canPerformAction, never from suggestedActions - this view is
+    // deliberately not first responder here, so the responder chain resolves nothing to suggest.
+    public func editMenuInteraction (_ interaction: UIEditMenuInteraction, menuFor configuration: UIEditMenuConfiguration, suggestedActions: [UIMenuElement]) -> UIMenu? {
+        UIMenu (children: editMenuEntries().map { entry in
+            UIAction (title: entry.title) { [weak self] _ in
+                _ = self?.perform (entry.action, with: nil)
+            }
+        })
+    }
+
+    public func editMenuInteraction (_ interaction: UIEditMenuInteraction, targetRectFor configuration: UIEditMenuConfiguration) -> CGRect {
+        lastLongSelectRegion
+    }
+
+    public func editMenuInteraction (_ interaction: UIEditMenuInteraction, willPresentMenuFor configuration: UIEditMenuConfiguration, animator: any UIEditMenuInteractionAnimating) {
+        isEditMenuVisible = true
+    }
+
+    public func editMenuInteraction (_ interaction: UIEditMenuInteraction, willDismissMenuFor configuration: UIEditMenuConfiguration, animator: any UIEditMenuInteractionAnimating) {
+        // constraint: clear here, not in the animator's completion - a dropped completion leaves this stuck true, and every later tap then dismisses instead of presenting.
+        isEditMenuVisible = false
     }
 }
 
