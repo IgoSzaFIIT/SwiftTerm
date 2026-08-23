@@ -1751,7 +1751,7 @@ extension TerminalView {
     func updateDisplay (notifyAccessibility: Bool)
     {
         defer { pendingDisplay = false }
-        if terminal.synchronizedOutputActive {
+        if terminal.synchronizedOutputActive || displayUpdatesSuspended {
             return
         }
         updateCursorPosition()

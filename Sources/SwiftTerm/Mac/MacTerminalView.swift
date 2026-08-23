@@ -204,6 +204,10 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     private var findBarOptions: SearchOptions = SearchOptions()
     var debug: TerminalDebugView?
     var pendingDisplay: Bool = false
+
+    /// When set, `updateDisplay` returns without painting or consuming the update range;
+    /// clear it and feed (or queue a display) to resume.
+    public var displayUpdatesSuspended: Bool = false
     /// Output received shortly after local input is likely echo or prompt redraw;
     /// render it without the 16.67ms frame-rate throttle so typing feels responsive.
     var lastUserInputUptimeNs: UInt64 = 0
