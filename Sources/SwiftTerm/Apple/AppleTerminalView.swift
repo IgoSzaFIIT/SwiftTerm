@@ -111,6 +111,10 @@ struct GlyphSlotFit {
 extension TerminalView {
     typealias CellDimension = CGSize
 
+    /// The size of one character cell, as the grid is drawn with. A host laying the view
+    /// out can use it to reconcile its own geometry with the terminal's.
+    public var cellSize: CGSize { cellDimension }
+
 #if os(macOS)
     /// Controls whether font smoothing (sub-pixel rendering) is enabled during glyph drawing.
     /// Set to `false` to get thinner strokes on Retina displays, matching iTerm2's "Thin strokes" setting.
