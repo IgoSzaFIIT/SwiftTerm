@@ -419,7 +419,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             if let caretView = caretView {
                 insertSubview(mtkView, belowSubview: caretView)
                 caretView.disableAnimations()
-                caretView.isHidden = true
+                caretView.removeFromSuperview()
             } else {
                 addSubview(mtkView)
             }
@@ -432,7 +432,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             metalView = nil
             metalRenderer = nil
             if let caretView = caretView {
-                caretView.isHidden = false
+                addSubview(caretView)
                 caretView.updateCursorStyle()
             }
             setNeedsDisplay(bounds)
@@ -3010,14 +3010,11 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     }
     
     open func showCursor(source: Terminal) {
-        guard let caretView else { return }
-        if caretView.superview == nil {
-            addSubview(caretView)
-        }
+        caretView?.isHidden = false
     }
 
     open func hideCursor(source: Terminal) {
-        caretView?.removeFromSuperview()
+        caretView?.isHidden = true
     }
     
     open func cursorStyleChanged (source: Terminal, newStyle: CursorStyle) {

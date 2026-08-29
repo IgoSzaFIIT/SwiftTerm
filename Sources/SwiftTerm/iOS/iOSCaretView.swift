@@ -63,6 +63,11 @@ class CaretView: UIView {
     }
     
     func updateAnimation (to: Bool) {
+        // constraint: restarting a running fade snaps opacity back to 1, so anything that calls
+        // this repeatedly (a window transition, a style refresh) would strobe the caret.
+        if to && window != nil && layer.animation(forKey: #keyPath (CALayer.opacity)) != nil {
+            return
+        }
         layer.removeAllAnimations()
         self.layer.opacity = 1
         if window == nil {

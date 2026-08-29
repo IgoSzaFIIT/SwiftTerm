@@ -1886,13 +1886,12 @@ extension TerminalView {
         let vy = buffer.yBase + buffer.y
         
         if vy >= buffer.yDisp + buffer.rows {
-            caretView.removeFromSuperview()
+            caretView.isHidden = true
             return
-        } else if terminal.cursorHidden == false && caretView.superview != self {
-            addSubview(caretView)
-        } else if terminal.cursorHidden == true && caretView.superview == self {
-            caretView.removeFromSuperview()
         }
+        // constraint: hide by flag, never by removing the view - a re-add restarts the blink
+        // animation from full opacity, and a full-screen app toggles the cursor every frame.
+        caretView.isHidden = terminal.cursorHidden
         let doublePosition = buffer.lines [vy].renderMode == .single ? 1.0 : 2.0
         #if os(iOS) || os(visionOS)
         let offset = (cellDimension.height * (CGFloat(buffer.y+(buffer.yBase))))
