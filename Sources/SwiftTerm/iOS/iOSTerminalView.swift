@@ -2634,7 +2634,8 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         
         if code {
             terminal.setTerminalFocus(false)
-            caretView?.disableAnimations()
+            // constraint: the blink keeps running - on iOS the keyboard going down is not the
+            // view going away, and drawCursor already reads focus to draw the hollow caret.
             caretView?.updateView()
             keyRepeat?.invalidate()
             keyRepeat = nil
