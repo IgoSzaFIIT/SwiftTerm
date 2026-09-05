@@ -1447,9 +1447,13 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
 
     /// Clears any active selection. Companion to `setSelectionRange`
     /// for callers that don't have a UIResponder hook into the menu
-    /// system (where `selectNone` would otherwise come from).
+    /// system (where `selectNone` would otherwise come from) - and it
+    /// takes the drag down with the selection, the way `copy` does.
+    /// Left armed, the drag's no-selection arm reads the next
+    /// one-finger pan as arrow keys for the remote.
     public func clearSelection() {
         selection?.selectNone()
+        disableSelectionPanGesture()
     }
 
     /// Selects the buffer range and presents the standard context menu
@@ -1474,6 +1478,9 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         // A blank cell selects nothing: the word expansion reads one as "take the whole
         // whitespace run", which on a mostly-empty prompt row is the entire row.
         guard !isBlank (at: hit) else {
+            // A press re-decides the selection wherever it lands: without this the last press's
+            // highlight stands and the menu offers Copy over ink the finger is not on.
+            clearSelection ()
             showContextMenu (forRegion: makeContextMenuRegionForTap (point: point), pos: hit)
             return
         }
