@@ -1470,7 +1470,23 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     /// over it — the path the built-in long-press gesture takes. Takes no first responder, so
     /// whatever state the keyboard was in is the state it stays in.
     public func showStandardContextMenu(at point: CGPoint) {
-        selectWord (at: calculateTapHit (point: point).grid)
+        let hit = calculateTapHit (point: point).grid
+        // A blank cell selects nothing: the word expansion reads one as "take the whole
+        // whitespace run", which on a mostly-empty prompt row is the entire row.
+        guard !isBlank (at: hit) else {
+            showContextMenu (forRegion: makeContextMenuRegionForTap (point: point), pos: hit)
+            return
+        }
+        selectWord (at: hit)
+    }
+
+    /// Whether the cell at a buffer-relative position holds nothing - the two cases
+    /// `selectWordOrExpression` treats as whitespace. Out of the buffer counts as blank.
+    private func isBlank (at position: Position) -> Bool {
+        let buffer = terminal.displayBuffer
+        guard position.row >= 0, position.row < buffer.lines.count else { return true }
+        let ch = terminal.getCharacter (for: buffer.getChar (atBufferRelative: position))
+        return ch == " " || ch == Character (UnicodeScalar (0))
     }
 
     var lineAscent: CGFloat = 0
